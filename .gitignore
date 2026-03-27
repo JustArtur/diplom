@@ -1,0 +1,8 @@
+.env
+.venv
+/data/raw
+/diplom/viz/__pycache__
+.idea
+.DS_Store
+.aiassistant
+**/__pycache__/
