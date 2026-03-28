@@ -22,10 +22,7 @@ from .constants import (
     CAMERA_ORBIT_RADIUS,
     DRIFT_SPEED_SCALE,
     ENERGY_INITIAL,
-    ENERGY_PER_METER,
     INITIAL_HEIGHT,
-    LERP_FACTOR,
-    LERP_REFERENCE_DT,
     MAX_FRAME_DELTA_S,
     MIN_HEIGHT,
     MIN_TICK_INTERVAL_S,
@@ -204,17 +201,23 @@ class BalloonSimulation:
 
     def _setup_controls(self) -> None:
         """Привязать клавиши и таймеры анимации."""
-        self.plotter.add_key_event("i", partial(self._adjust_speed, BALLON_SPEED))
-        self.plotter.add_key_event("k", partial(self._adjust_speed, -BALLON_SPEED))
-        self.plotter.add_timer_event(
-            max_steps=10 ** 9, duration=ANIM_INTERVAL_MS, callback=self._on_timer,
-        )
+        self.plotter.add_key_event("a", partial(self._move_ballon, BALLON_SPEED))
+        self.plotter.add_key_event("z", partial(self._move_ballon, -BALLON_SPEED))
+        self.plotter.iren.add_observer("KeyReleaseEvent", self._stop_ballon)
+
+        self.plotter.add_timer_event(max_steps=10 ** 9, duration=ANIM_INTERVAL_MS, callback=self._on_timer)
         self.plotter.iren.add_observer("RenderEvent", self._on_render)
 
-    def _adjust_speed(self, speed) -> None:
+    def _move_ballon(self, speed) -> None:
         """Задаем скорость шара"""
         self.vertical_speed = speed
         self._sync_hud()
+
+    def _stop_ballon(self, obj, _event) -> None:
+        """Убираем скорость шара"""
+        key = obj.GetKeySym().lower()
+        if key in ("a", "z"):
+            self.vertical_speed = 0
 
     # ──────────────────── Игровой цикл ────────────────────
 
@@ -260,12 +263,11 @@ class BalloonSimulation:
                                                          self.height, self.sim_time, )
         self._last_wind = (wx, wy, wz)
 
-        # x(t+dt) = x(t) + v · k · dt  (Эйлер)
+        # x(t+dt) = x(t) + v · k · dt
         self.position[0] += wx * DRIFT_SPEED_SCALE * dt
         self.position[1] += wy * DRIFT_SPEED_SCALE * dt
         self.position[2] += wz * (DRIFT_SPEED_SCALE * dt) # Старостат двигает ветер по вертикали
         self.position[2] += dt * self.vertical_speed # Также поднимается со своей собственной скоростью
-        self.vertical_speed = 0
 
         # Ограничение мировыми границами
         self.position[0] = np.clip(self.position[0], -WORLD_SIZE, WORLD_SIZE)
