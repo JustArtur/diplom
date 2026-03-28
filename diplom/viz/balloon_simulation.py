@@ -2,6 +2,7 @@
 
 import time
 from datetime import datetime
+from functools import partial
 from typing import Callable, Optional
 
 import numpy as np
@@ -22,7 +23,6 @@ from .constants import (
     DRIFT_SPEED_SCALE,
     ENERGY_INITIAL,
     ENERGY_PER_METER,
-    HEIGHT_STEP,
     INITIAL_HEIGHT,
     LERP_FACTOR,
     LERP_REFERENCE_DT,
@@ -39,7 +39,7 @@ from .constants import (
     TERRAIN_FREQ_SIN,
     TERRAIN_RESOLUTION,
     WIND_SPEED_MAX_COLOR,
-    WORLD_SIZE,
+    WORLD_SIZE, BALLON_SPEED,
 )
 from .hud import BalloonHUD, HudState
 from .particles import WindParticles
@@ -54,17 +54,16 @@ class BalloonSimulation:
 
     # ──────────────────── Инициализация ────────────────────
     def __init__(self, *, wind_interpolator: WindInterpolator, plotter: pv.Plotter, hud: BalloonHUD,
-                 start_time: Optional[datetime] = None, monotonic_clock: Callable[[], float] = time.monotonic) -> None:
+                 sim_start_time: np.datetime64) -> None:
         # ── Физическое состояние ──
         self.position = np.array([0.0, 0.0, INITIAL_HEIGHT])  # [x, y, z] (м)
         self.target_position = TARGET_POSITION  # позиция цели
-        self.setpoint_altitude = INITIAL_HEIGHT  # заданная высота
+        self.vertical_speed = 0  # скорость подьема шара, задается по нажатию кнопки
         self.energy = ENERGY_INITIAL  # запас энергии
 
         # ── Время ──
-        self._clock = monotonic_clock
-        self.start_time = self._clock()
-        self.sim_time = start_time
+        self.start_time = time.monotonic()
+        self.sim_time = sim_start_time
         self._last_tick = self.start_time
 
         # ── Ветер ──
@@ -74,7 +73,7 @@ class BalloonSimulation:
         # ── Визуальные компоненты ──
         self.plotter = plotter
         self._hud = hud
-        self._particles = WindParticles(self.position.copy(), wind_interpolator, self.sim_time, )
+        self._particles = WindParticles(self.position.copy(), wind_interpolator, self.sim_time)
 
         self._build_scene()
 
@@ -132,7 +131,7 @@ class BalloonSimulation:
             self.plotter.add_mesh(rope, color="saddlebrown", line_width=3, name="rope"),
             self.plotter.add_mesh(basket, color="sienna", name="basket"),
         ]
-        self._move_balloon_to(self.position)
+        self._move_balloon_to()
 
     def _build_target(self) -> None:
         """Маркер цели и линия «аэростат → цель»."""
@@ -154,11 +153,10 @@ class BalloonSimulation:
 
     # ──────────────────── Обновление визуалов ────────────────────
 
-    def _move_balloon_to(self, pos: np.ndarray) -> None:
+    def _move_balloon_to(self) -> None:
         """Переместить акторы аэростата через VTK SetPosition."""
-        p = tuple(pos)
         for actor in self._balloon_actors:
-            actor.position = p
+            actor.position = self.position
 
     def _sync_target_line(self) -> None:
         """Обновить линию «аэростат → цель»."""
@@ -172,7 +170,6 @@ class BalloonSimulation:
         self._hud.update(HudState(
             position=self.position.copy(),
             target_position=self.target_position,
-            setpoint_altitude=self.setpoint_altitude,
             energy=self.energy,
             last_wind=self._last_wind,
             last_temperature=temp,
@@ -207,23 +204,17 @@ class BalloonSimulation:
 
     def _setup_controls(self) -> None:
         """Привязать клавиши и таймеры анимации."""
-        self.plotter.add_key_event("i", self._move_up)
-        self.plotter.add_key_event("k", self._move_down)
+        self.plotter.add_key_event("i", partial(self._adjust_speed, BALLON_SPEED))
+        self.plotter.add_key_event("k", partial(self._adjust_speed, -BALLON_SPEED))
         self.plotter.add_timer_event(
             max_steps=10 ** 9, duration=ANIM_INTERVAL_MS, callback=self._on_timer,
         )
         self.plotter.iren.add_observer("RenderEvent", self._on_render)
 
-    def _move_up(self) -> None:
-        """Увеличить заданную высоту на один шаг."""
-        self.setpoint_altitude += HEIGHT_STEP
+    def _adjust_speed(self, speed) -> None:
+        """Задаем скорость шара"""
+        self.vertical_speed = speed
         self._sync_hud()
-
-    def _move_down(self) -> None:
-        """Уменьшить заданную высоту (не ниже минимума)."""
-        if self.setpoint_altitude - HEIGHT_STEP >= MIN_HEIGHT:
-            self.setpoint_altitude -= HEIGHT_STEP
-            self._sync_hud()
 
     # ──────────────────── Игровой цикл ────────────────────
 
@@ -235,7 +226,7 @@ class BalloonSimulation:
 
     def _do_tick(self) -> None:
         """Один шаг симуляции + обновление визуализации."""
-        now = self._clock()
+        now = time.monotonic()
         dt = now - self._last_tick
         if dt < MIN_TICK_INTERVAL_S:
             return
@@ -243,13 +234,12 @@ class BalloonSimulation:
         dt = min(dt, MAX_FRAME_DELTA_S)
 
         # ── Симуляция ──
-        self._advance_sim_time(dt)
+        self._adjust_sim_time(dt)
         self._particles.step(self.position, self.sim_time)
         self._advect_balloon(dt)
-        self._lerp_balloon(dt)
 
         # ── Визуалы ──
-        self._move_balloon_to(self.position)
+        self._move_balloon_to()
         self._follow_camera()
         self._sync_target_line()
         self._sync_hud()
@@ -273,47 +263,16 @@ class BalloonSimulation:
         # x(t+dt) = x(t) + v · k · dt  (Эйлер)
         self.position[0] += wx * DRIFT_SPEED_SCALE * dt
         self.position[1] += wy * DRIFT_SPEED_SCALE * dt
-        self.position[2] += wz * DRIFT_SPEED_SCALE * dt
+        self.position[2] += wz * (DRIFT_SPEED_SCALE * dt) # Старостат двигает ветер по вертикали
+        self.position[2] += dt * self.vertical_speed # Также поднимается со своей собственной скоростью
+        self.vertical_speed = 0
 
         # Ограничение мировыми границами
-        limit = WORLD_SIZE * 0.45
-        self.position[0] = float(np.clip(self.position[0], -limit, limit))
-        self.position[1] = float(np.clip(self.position[1], -limit, limit))
-        self.position[2] = max(float(self.position[2]), float(MIN_HEIGHT))
+        self.position[0] = np.clip(self.position[0], -WORLD_SIZE, WORLD_SIZE)
+        self.position[1] = np.clip(self.position[1], -WORLD_SIZE, WORLD_SIZE)
+        self.position[2] = max((self.position[2]), MIN_HEIGHT)
 
-    def _lerp_balloon(self, dt: float) -> None:
-        """Плавное изменение высоты к setpoint с расходом энергии.
-
-        Фрейм-независимое экспоненциальное сглаживание:
-            α = 1 − (1 − λ)^(dt / dt₀)
-            z(t+dt) = z(t) + (z_target − z(t)) · α
-
-        где λ = LERP_FACTOR, dt₀ = LERP_REFERENCE_DT (эталонный шаг).
-
-        Вертикальный ветер отклоняет шар от setpoint — lerp возвращает обратно,
-        расходуя энергию (имитация работы системы управления плавучестью).
-
-        Расход энергии: ΔE = |Δh| · ENERGY_PER_METER.
-        """
-        prev_height = self.height
-        diff = self.setpoint_altitude - self.height
-
-        if abs(diff) < 0.5:
-            if self.height != self.setpoint_altitude:
-                self.position[2] = self.setpoint_altitude
-            return
-
-        # α = 1 − (1 − λ)^(dt/dt₀)
-        alpha = 1.0 - (1.0 - LERP_FACTOR) ** (dt / LERP_REFERENCE_DT)
-        # z(t+dt) = z(t) + (z_target − z(t)) · α
-        self.position[2] = self.height + diff * alpha
-
-        # ΔE = |Δh| · ENERGY_PER_METER
-        delta_h = abs(self.height - prev_height)
-        if delta_h > 1e-3:
-            self.energy = max(0.0, self.energy - delta_h * ENERGY_PER_METER)
-
-    def _advance_sim_time(self, dt: float) -> None:
+    def _adjust_sim_time(self, dt: float) -> None:
         """Продвинуть время симуляции для запросов к временным слоям ветра."""
         self.sim_time += np.timedelta64(int(dt * 1000), "ms")
 

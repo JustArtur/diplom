@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pyvista as pv
 
 from diplom.wind.interp import WindInterpolator
@@ -33,12 +34,9 @@ class VisualizationRunner:
         """Создать HUD для данного плоттера."""
         return BalloonHUD(plotter)
 
-    def run_real(self, *, data_path: Path, origin_lat: float, origin_lon: float,
-                 start_time: Optional[datetime] = None) -> None:
+    def run_real(self, *, data_path: Path, origin_lat: float, origin_lon: float, start_time: np.datetime64) -> None:
         """Загрузить реальные данные ветра и запустить визуализацию."""
-        wind_interpolator = WindInterpolator.from_file(
-            path=data_path, origin_lat=origin_lat, origin_lon=origin_lon,
-        )
+        wind_interpolator = WindInterpolator.from_file(path=data_path, origin_lat=origin_lat, origin_lon=origin_lon)
         plotter = self.build_plotter()
         hud = self.build_hud(plotter)
 
@@ -46,5 +44,5 @@ class VisualizationRunner:
             wind_interpolator=wind_interpolator,
             plotter=plotter,
             hud=hud,
-            start_time=start_time,
+            sim_start_time=start_time,
         ).run()

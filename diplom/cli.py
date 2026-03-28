@@ -7,6 +7,7 @@ from typing import Optional
 
 from datetime import datetime
 
+import numpy as np
 import typer
 from dotenv import load_dotenv
 
@@ -53,29 +54,6 @@ def download(
         pressure_levels=level,
         variables=variable,
     )
-
-
-
-# ──────────────────── viz_real ────────────────────
-
-@app.command()
-def viz_real(
-    data: Path = typer.Option(Path("data/raw/era5_sample.nc"), "--data", help="Путь к NetCDF ERA5"),
-    origin_lat: float = typer.Option(54.5, "--lat",help="Широта точки отсчёта"),
-    origin_lon: float = typer.Option(57.0, "--lon", help="Долгота точки отсчёта"),
-    start_time: datetime = typer.Option("2024-07-01", help="Время слоя симуляции"),
-) -> None:
-    """Запуск PyVista-визуализации на реальном ветре."""
-
-    from diplom.viz.visualization_runner import VisualizationRunner
-
-    VisualizationRunner().run_real(
-        data_path=data,
-        origin_lat=origin_lat,
-        origin_lon=origin_lon,
-        start_time=start_time,
-    )
-
 
 # ──────────────────── Точка входа ────────────────────
 

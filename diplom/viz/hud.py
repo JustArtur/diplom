@@ -16,7 +16,7 @@ class HudState:
 
     position: np.ndarray                    # позиция аэростата [x, y, z] (м)
     target_position: np.ndarray             # позиция цели [x, y, z] (м)
-    setpoint_altitude: float                # заданная высота (м)
+    # setpoint_altitude: float                # заданная высота (м)
     energy: float                           # остаток энергии (ед.)
     last_wind: Tuple[float, float, float]   # последний вектор ветра (u, v, w) м/с
     last_temperature: Optional[float]       # температура воздуха в точке аэростата (K)
@@ -79,7 +79,7 @@ class BalloonHUD:
             temp_str = "T: н/д"
 
         return (
-            f"Высота: {state.height:.1f} м \u2192 {state.setpoint_altitude:.0f} м  |  "
+            f"Высота: {state.height:.1f} м |  "
             f"Позиция: ({state.position[0]:.1f}, {state.position[1]:.1f}) м  |  "
             f"Ветер: {horiz_speed:.1f} м/с, курс: {bearing:5.1f}\u00b0, "
             f"верт: {vert_str} м/с  |  "

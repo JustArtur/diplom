@@ -22,12 +22,7 @@ def meters_per_deg_lat(latitude_deg: float) -> float:
         M(φ) ≈ 111132.92 − 559.82·cos(2φ) + 1.175·cos(4φ) − 0.0023·cos(6φ)
     """
     lat_rad = math.radians(latitude_deg)
-    return (
-            111132.92
-            - 559.82 * math.cos(2 * lat_rad)
-            + 1.175 * math.cos(4 * lat_rad)
-            - 0.0023 * math.cos(6 * lat_rad)
-    )
+    return 111132.92 - 559.82 * math.cos(2 * lat_rad) + 1.175 * math.cos(4 * lat_rad) - 0.0023 * math.cos(6 * lat_rad)
 
 
 def meters_per_deg_lon(latitude_deg: float) -> float:
@@ -37,17 +32,13 @@ def meters_per_deg_lon(latitude_deg: float) -> float:
         N(φ) ≈ 111412.84·cos(φ) − 93.5·cos(3φ) + 0.118·cos(5φ)
     """
     lat_rad = math.radians(latitude_deg)
-    return (
-            111412.84 * math.cos(lat_rad)
-            - 93.5 * math.cos(3 * lat_rad)
-            + 0.118 * math.cos(5 * lat_rad)
-    )
+    return 111412.84 * math.cos(lat_rad) - 93.5 * math.cos(3 * lat_rad) + 0.118 * math.cos(5 * lat_rad)
 
 
 def altitude_to_pressure_hpa(height_m: np.ndarray) -> np.ndarray:
     """Давление (гПа) по высоте через барометрическую формулу стандартной атмосферы.
 
-    Барометрическая формула ISA (ниже тропопаузы ≈ 11 км):
+    Барометрическая формула ISA(международная стандартная атмосфера) (ниже тропопаузы ≈ 11 км):
         p(h) = p₀ · (1 − L·h / T₀) ^ (g·M / (R·L))
 
     где p₀ = 1013.25 гПа, T₀ = 288.15 K, L = 0.0065 K/м,
@@ -68,10 +59,6 @@ def altitude_to_pressure_hpa(height_m: np.ndarray) -> np.ndarray:
 
 # ──────────────────── Конвертация вертикальной скорости ────────────────────
 
-_R_DRY = 287.058  # газовая постоянная сухого воздуха (Дж/(кг·К))
-_G = 9.80665  # ускорение свободного падения (м/с²)
-
-
 def omega_to_w_mps(omega_pa_s: np.ndarray, pressure_hpa: np.ndarray, temperature_k: np.ndarray, ) -> np.ndarray:
     """Конвертация давленческой скорости omega (Па/с) → вертикальная скорость w (м/с).
 
@@ -88,12 +75,16 @@ def omega_to_w_mps(omega_pa_s: np.ndarray, pressure_hpa: np.ndarray, temperature
 
     Положительное w = восходящее движение.
     """
+
+    r_dry = 287.058  # газовая постоянная сухого воздуха (Дж/(кг·К))
+    g = 9.80665  # ускорение свободного падения (м/с²)
+
     p_pa = np.asarray(pressure_hpa, dtype=float) * 100.0  # гПа → Па
     safe_p = np.where(p_pa > 1.0, p_pa, 1.0)  # защита от деления на 0
     omega = np.asarray(omega_pa_s, dtype=float)
     temp = np.asarray(temperature_k, dtype=float)
     # w = −ω · Rₐ · T / (p · g)
-    return -omega * _R_DRY * temp / (safe_p * _G)
+    return -omega * r_dry * temp / (safe_p * g)
 
 
 # ──────────────────── Имена переменных датасета ────────────────────
@@ -118,13 +109,6 @@ class WindInterpolator:
     ds: xr.Dataset
     origin_lat: float
     origin_lon: float
-
-    _lat_min: float = field(init=False)
-    _lat_max: float = field(init=False)
-    _lon_min: float = field(init=False)
-    _lon_max: float = field(init=False)
-    _time_min: np.datetime64 = field(init=False)
-    _time_max: np.datetime64 = field(init=False)
 
     def __post_init__(self) -> None:
         lat_coord = self.ds[LAT_NAME]
@@ -161,11 +145,6 @@ class WindInterpolator:
         p_min, p_max = float(level_coord.min()), float(level_coord.max())
         return np.clip(p, min(p_min, p_max), max(p_min, p_max))
 
-    def _clip_time(self, t: np.ndarray) -> np.ndarray:
-        """Кламп времени к диапазону датасета."""
-        t = np.array(t, dtype="datetime64[ns]")
-        return np.clip(t, self._time_min, self._time_max)
-
     # ──────────────────── Интерполяция ────────────────────
 
     def _interp_at(self, lat: np.ndarray, lon: np.ndarray, level: np.ndarray, t: np.ndarray, ) -> xr.Dataset:
@@ -182,7 +161,7 @@ class WindInterpolator:
 
     # ──────────────────── Публичный API ────────────────────
 
-    def vector_at(self, x: float, y: float, z: float, time: datetime) -> Tuple[
+    def vector_at(self, x: float, y: float, z: float, time: np.datetime64) -> Tuple[
         float, float, float, float]:
         """Вектор ветра (u, v, w) м/с в одной точке. w > 0 = вверх."""
         lat, lon = self._xy_to_latlon(np.array([x]), np.array([y]))
