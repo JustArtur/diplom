@@ -22,7 +22,6 @@ class SimParams:
     dt: float
     air_pump_speed: float
     sim_time: np.datetime64
-    energy: float
 
 
 @dataclass
@@ -31,6 +30,9 @@ class SimState:
     vertical_speed: float
     vertical_acceleration: float
     energy_spent: float
+    temperature: float
+    pressure: float
+    wind: np.ndarray
 
 
 class Simulation:
@@ -69,9 +71,12 @@ class Simulation:
 
         return SimState(
             position=np.array(ps.position, dtype=float),
+            wind=np.array([wx, wy, wz], dtype=float),
             vertical_speed=self.vertical_speed,
             vertical_acceleration=self.vertical_acceleration,
             energy_spent=self.energy_spent,
+            temperature=temperature,
+            pressure=pressure
         )
 
     def gas_density(self, molar_mass, pressure, temperature):

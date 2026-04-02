@@ -56,9 +56,6 @@ class BalloonSimulation:
         self.position = np.array([0.0, 0.0, INITIAL_HEIGHT])  # [x, y, z] (м)
         self.target_position = TARGET_POSITION  # позиция цели
         self.air_pump_speed = 0.0  # скорость закачки/выпуска воздуха (кг/с)
-        self.vertical_speed = 0.0  # рассчитанная вертикальная скорость шара (м/с)
-        self.vertical_acceleration = 0.0  # текущее вертикальное ускорение
-        self.energy_spent = 0.0  # затраченная энергия
 
         # ── Время ──
         self.start_time = time.monotonic()
@@ -68,7 +65,6 @@ class BalloonSimulation:
         # ── Ветер ──
         self.wind_interpolator = wind_interpolator
         self.sim = sim
-        self._last_wind: tuple[float, float, float] = (0.0, 0.0, 0.0)  # (u, v, w) кэш
 
         # ── Визуальные компоненты ──
         self.plotter = plotter
@@ -85,7 +81,6 @@ class BalloonSimulation:
         self._build_balloon()
         self._build_target()
         self._init_wind_mesh()
-        self._sync_hud()
         self._setup_controls()
         self._init_camera()
 
@@ -158,21 +153,15 @@ class BalloonSimulation:
 
     def _sync_hud(self) -> None:
         """Передать текущее состояние в HUD."""
-        wx, wy, wz, temp, _ = self.wind_interpolator.vector_at(
-            float(self.position[0]),
-            float(self.position[1]),
-            float(self.position[2]),
-            self.sim_time,
-        )
-        self._last_wind = (float(wx), float(wy), float(wz))
         self._hud.update(HudState(
             position=self.position.copy(),
             target_position=self.target_position,
             energy_spent=self.energy_spent,
             vertical_speed=self.vertical_speed,
             vertical_acceleration=self.vertical_acceleration,
-            last_wind=self._last_wind,
-            last_temperature=temp,
+            wind=self.wind,
+            temperature=self.temperature,
+            pressure=self.pressure,
             start_monotonic=self.start_time,
         ))
 
@@ -214,7 +203,6 @@ class BalloonSimulation:
     def _set_air_pump_speed(self, speed: float) -> None:
         """Задаем скорость закачки воздуха в баллон."""
         self.air_pump_speed = speed
-        self._sync_hud()
 
     def _stop_ballon(self, obj, _event) -> None:
         """Убираем скорость шара"""
@@ -258,13 +246,15 @@ class BalloonSimulation:
             sim_time=self.sim_time,
             position=self.position,
             air_pump_speed=self.air_pump_speed,
-            energy=self.energy_spent,
         ))
 
         self.position = state.position
         self.vertical_speed = state.vertical_speed
         self.vertical_acceleration = state.vertical_acceleration
         self.energy_spent = state.energy_spent
+        self.temperature = state.temperature
+        self.pressure = state.pressure
+        self.wind = state.wind
     # ──────────────────── Физика ────────────────────
 
     def _adjust_sim_time(self, dt: float) -> None:
