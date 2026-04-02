@@ -8,6 +8,7 @@ from typing import Callable, Optional
 import numpy as np
 import pyvista as pv
 from huey.utils import utcnow
+from sympy.physics.pring import energy
 
 from diplom.wind.interp import WindInterpolator
 
@@ -20,11 +21,9 @@ from .constants import (
     CAMERA_INITIAL_OFFSET,
     CAMERA_INITIAL_VIEW_UP,
     CAMERA_ORBIT_RADIUS,
-    DRIFT_SPEED_SCALE,
-    ENERGY_INITIAL,
     INITIAL_HEIGHT,
     MAX_FRAME_DELTA_S,
-    MIN_HEIGHT,
+    DEFAULT_AIR_PUMP_SPEED,
     MIN_TICK_INTERVAL_S,
     ROPE_BOTTOM_Z,
     ROPE_TOP_Z,
@@ -36,10 +35,11 @@ from .constants import (
     TERRAIN_FREQ_SIN,
     TERRAIN_RESOLUTION,
     WIND_SPEED_MAX_COLOR,
-    WORLD_SIZE, BALLON_SPEED,
+    WORLD_SIZE,
 )
 from .hud import BalloonHUD, HudState
 from .particles import WindParticles
+from ..sim.simulation import Simulation, SimParams
 
 
 class BalloonSimulation:
@@ -51,12 +51,14 @@ class BalloonSimulation:
 
     # ──────────────────── Инициализация ────────────────────
     def __init__(self, *, wind_interpolator: WindInterpolator, plotter: pv.Plotter, hud: BalloonHUD,
-                 sim_start_time: np.datetime64) -> None:
+                 sim_start_time: np.datetime64, sim: Simulation) -> None:
         # ── Физическое состояние ──
         self.position = np.array([0.0, 0.0, INITIAL_HEIGHT])  # [x, y, z] (м)
         self.target_position = TARGET_POSITION  # позиция цели
-        self.vertical_speed = 0  # скорость подьема шара, задается по нажатию кнопки
-        self.energy = ENERGY_INITIAL  # запас энергии
+        self.air_pump_speed = 0.0  # скорость закачки/выпуска воздуха (кг/с)
+        self.vertical_speed = 0.0  # рассчитанная вертикальная скорость шара (м/с)
+        self.vertical_acceleration = 0.0  # текущее вертикальное ускорение
+        self.energy_spent = 0.0  # затраченная энергия
 
         # ── Время ──
         self.start_time = time.monotonic()
@@ -65,6 +67,7 @@ class BalloonSimulation:
 
         # ── Ветер ──
         self.wind_interpolator = wind_interpolator
+        self.sim = sim
         self._last_wind: tuple[float, float, float] = (0.0, 0.0, 0.0)  # (u, v, w) кэш
 
         # ── Визуальные компоненты ──
@@ -73,13 +76,6 @@ class BalloonSimulation:
         self._particles = WindParticles(self.position.copy(), wind_interpolator, self.sim_time)
 
         self._build_scene()
-
-    # ──────────────────── Свойства ────────────────────
-
-    @property
-    def height(self) -> float:
-        """Текущая высота аэростата (м)."""
-        return float(self.position[2])
 
     # ──────────────────── Построение сцены ────────────────────
 
@@ -162,12 +158,19 @@ class BalloonSimulation:
 
     def _sync_hud(self) -> None:
         """Передать текущее состояние в HUD."""
-        _, _, _, temp = self.wind_interpolator.vector_at(float(self.position[0]), float(self.position[1]), self.height,
-                                                         self.sim_time, )
+        wx, wy, wz, temp, _ = self.wind_interpolator.vector_at(
+            float(self.position[0]),
+            float(self.position[1]),
+            float(self.position[2]),
+            self.sim_time,
+        )
+        self._last_wind = (float(wx), float(wy), float(wz))
         self._hud.update(HudState(
             position=self.position.copy(),
             target_position=self.target_position,
-            energy=self.energy,
+            energy_spent=self.energy_spent,
+            vertical_speed=self.vertical_speed,
+            vertical_acceleration=self.vertical_acceleration,
             last_wind=self._last_wind,
             last_temperature=temp,
             start_monotonic=self.start_time,
@@ -201,23 +204,23 @@ class BalloonSimulation:
 
     def _setup_controls(self) -> None:
         """Привязать клавиши и таймеры анимации."""
-        self.plotter.add_key_event("a", partial(self._move_ballon, BALLON_SPEED))
-        self.plotter.add_key_event("z", partial(self._move_ballon, -BALLON_SPEED))
+        self.plotter.add_key_event("a", partial(self._set_air_pump_speed, -DEFAULT_AIR_PUMP_SPEED))
+        self.plotter.add_key_event("z", partial(self._set_air_pump_speed, DEFAULT_AIR_PUMP_SPEED))
         self.plotter.iren.add_observer("KeyReleaseEvent", self._stop_ballon)
 
         self.plotter.add_timer_event(max_steps=10 ** 9, duration=ANIM_INTERVAL_MS, callback=self._on_timer)
         self.plotter.iren.add_observer("RenderEvent", self._on_render)
 
-    def _move_ballon(self, speed) -> None:
-        """Задаем скорость шара"""
-        self.vertical_speed = speed
+    def _set_air_pump_speed(self, speed: float) -> None:
+        """Задаем скорость закачки воздуха в баллон."""
+        self.air_pump_speed = speed
         self._sync_hud()
 
     def _stop_ballon(self, obj, _event) -> None:
         """Убираем скорость шара"""
         key = obj.GetKeySym().lower()
         if key in ("a", "z"):
-            self.vertical_speed = 0
+            self.air_pump_speed = 0.0
 
     # ──────────────────── Игровой цикл ────────────────────
 
@@ -238,8 +241,9 @@ class BalloonSimulation:
 
         # ── Симуляция ──
         self._adjust_sim_time(dt)
+        self._do_simulation(dt)
         self._particles.step(self.position, self.sim_time)
-        self._advect_balloon(dt)
+
 
         # ── Визуалы ──
         self._move_balloon_to()
@@ -248,31 +252,20 @@ class BalloonSimulation:
         self._sync_hud()
         self.plotter.renderer.ResetCameraClippingRange()
 
+    def _do_simulation(self, dt):
+        state = self.sim.step(SimParams(
+            dt=dt,
+            sim_time=self.sim_time,
+            position=self.position,
+            air_pump_speed=self.air_pump_speed,
+            energy=self.energy_spent,
+        ))
+
+        self.position = state.position
+        self.vertical_speed = state.vertical_speed
+        self.vertical_acceleration = state.vertical_acceleration
+        self.energy_spent = state.energy_spent
     # ──────────────────── Физика ────────────────────
-
-    def _advect_balloon(self, dt: float) -> None:
-        """Снос аэростата ветром (горизонтальный + вертикальный).
-
-        Интегрирование методом Эйлера (первого порядка):
-            x(t+dt) = x(t) + v_x · k · dt
-            y(t+dt) = y(t) + v_y · k · dt
-            z(t+dt) = z(t) + v_z · k · dt
-        где k = DRIFT_SPEED_SCALE — масштабный коэффициент визуализации.
-        """
-        wx, wy, wz, _ = self.wind_interpolator.vector_at(float(self.position[0]), float(self.position[1]),
-                                                         self.height, self.sim_time, )
-        self._last_wind = (wx, wy, wz)
-
-        # x(t+dt) = x(t) + v · k · dt
-        self.position[0] += wx * DRIFT_SPEED_SCALE * dt
-        self.position[1] += wy * DRIFT_SPEED_SCALE * dt
-        self.position[2] += wz * (DRIFT_SPEED_SCALE * dt) # Старостат двигает ветер по вертикали
-        self.position[2] += dt * self.vertical_speed # Также поднимается со своей собственной скоростью
-
-        # Ограничение мировыми границами
-        self.position[0] = np.clip(self.position[0], -WORLD_SIZE, WORLD_SIZE)
-        self.position[1] = np.clip(self.position[1], -WORLD_SIZE, WORLD_SIZE)
-        self.position[2] = max((self.position[2]), MIN_HEIGHT)
 
     def _adjust_sim_time(self, dt: float) -> None:
         """Продвинуть время симуляции для запросов к временным слоям ветра."""

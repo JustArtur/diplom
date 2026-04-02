@@ -1,6 +1,6 @@
 .env
 .venv
-/data/raw
+/data/
 /diplom/viz/__pycache__
 .idea
 .DS_Store

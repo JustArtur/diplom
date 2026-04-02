@@ -162,8 +162,8 @@ class WindInterpolator:
     # ──────────────────── Публичный API ────────────────────
 
     def vector_at(self, x: float, y: float, z: float, time: np.datetime64) -> Tuple[
-        float, float, float, float]:
-        """Вектор ветра (u, v, w) м/с в одной точке. w > 0 = вверх."""
+        float, float, float, float, float]:
+        """Вектор ветра (u, v, w) м/с, температура и давление Па в заданной точке."""
         lat, lon = self._xy_to_latlon(np.array([x]), np.array([y]))
         level = self._z_to_pressure(np.array([z]))
         t = np.array([time])
@@ -173,7 +173,7 @@ class WindInterpolator:
         v = pt[WIND_V_NAME].values[0]
         w = omega_to_w_mps(pt[WIND_W_NAME].values, level, pt[WIND_T_NAME].values)[0]
         t = pt[WIND_T_NAME].values[0]
-        return u, v, w, t
+        return u, v, w, t, level[0]
 
     def batch_vector_at(self, x: np.ndarray, y: np.ndarray, z: np.ndarray, time: np.ndarray) -> np.ndarray:
         """Векторы ветра (u, v, w) м/с для батча точек. Shape: (n, 3)."""

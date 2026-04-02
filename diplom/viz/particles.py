@@ -18,21 +18,14 @@ from .constants import (
 
 
 class WindParticles:
-    """Частицы, визуализирующие ветровое поле штрихами (streak lines).
+    """
+    Частицы, визуализирующие ветровое поле штрихами (streak lines).
 
     Частицы живут в диске радиуса VISIBLE_RADIUS вокруг аэростата
     и респавнятся при выходе за его границы.
-
-    Класс сам вызывает ``wind_interpolator.batch_vector_at`` и управляет мешом.
-    Снаружи доступен ``self.mesh`` для добавления в plotter.
     """
 
-    def __init__(
-        self,
-        center: np.ndarray,
-        wind_interpolator: WindInterpolator,
-        time: np.datetime64,
-    ) -> None:
+    def __init__(self, center: np.ndarray, wind_interpolator: WindInterpolator, time: np.datetime64) -> None:
         self.n_total = NUM_PARTICLES  # количество частиц
         self._wind_interpolator = wind_interpolator
         self._time = time
@@ -148,7 +141,7 @@ class WindParticles:
         wx, wy, wz = self._last_wind
         pts = np.empty((2 * self.n_total, 3))
         # Чётные индексы — голова (текущая позиция)
-    
+
         pts[0::2] = self.position
         # Нечётные — хвост (позиция − вектор ветра × длину штриха)
         pts[1::2, 0] = self.position[:, 0] - wx * STREAK_LENGTH
