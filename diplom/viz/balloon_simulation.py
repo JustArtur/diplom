@@ -241,12 +241,7 @@ class BalloonSimulation:
         self.plotter.renderer.ResetCameraClippingRange()
 
     def _do_simulation(self, dt):
-        state = self.sim.step(SimParams(
-            dt=dt,
-            sim_time=self.sim_time,
-            position=self.position,
-            air_pump_speed=self.air_pump_speed,
-        ))
+        state = self.sim.step(dt, self.air_pump_speed)
 
         self.position = state.position
         self.vertical_speed = state.vertical_speed

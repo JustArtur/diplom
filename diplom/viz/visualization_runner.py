@@ -9,7 +9,7 @@ from diplom.wind.interp import WindInterpolator
 from .balloon_simulation import BalloonSimulation
 from .constants import WINDOW_SIZE
 from .hud import BalloonHUD
-from ..sim.simulation import Simulation
+from ..sim.simulation import Simulation, SimParams
 
 
 class VisualizationRunner:
@@ -35,7 +35,7 @@ class VisualizationRunner:
     def run_real(self, *, data_path: Path, origin_lat: float, origin_lon: float, start_time: np.datetime64) -> None:
         """Загрузить реальные данные ветра и запустить визуализацию."""
         wind_interpolator = WindInterpolator.from_file(path=data_path, origin_lat=origin_lat, origin_lon=origin_lon)
-        simulation = Simulation(wind_interpolator)
+        simulation = Simulation(SimParams(wind_interp=wind_interpolator))
         plotter = self.build_plotter()
         hud = self.build_hud(plotter)
 
