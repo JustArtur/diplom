@@ -66,7 +66,7 @@ def omega_to_w_mps(omega_pa_s: np.ndarray, pressure_hpa: np.ndarray, temperature
     Отсюда:  ω = dp/dt = −ρ·g·(dz/dt) = −ρ·g·w
     Значит:  w = −ω / (ρ·g)
 
-    Плотность по уравнению состояния идеального газа:  ρ = p / (Rₐ·T)
+    Плотность по уравнению состояния идеального газа:  p = p / (Rₐ·T)
     Подставляя:
         w = −ω · Rₐ · T / (p · g)
 
