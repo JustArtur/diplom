@@ -6,3 +6,4 @@
 .DS_Store
 .aiassistant
 **/__pycache__/
+/runs

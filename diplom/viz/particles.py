@@ -5,10 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pyvista as pv
 
+from diplom.shared_constants import MIN_HEIGHT
 from diplom.wind.interp import WindInterpolator
 
 from .constants import (
-    MIN_HEIGHT,
     NUM_PARTICLES,
     PARTICLE_SPEED,
     STREAK_LENGTH,
@@ -29,7 +29,7 @@ class WindParticles:
         self.n_total = NUM_PARTICLES  # количество частиц
         self._wind_interpolator = wind_interpolator
         self._time = time
-        self._center = np.array(center, dtype=float)
+        self._center = np.array(center, dtype=np.float32)
 
         # Предвычисленный массив связности линий для VTK PolyData, формат lines [2, head_index, tail_index]
         # head_index, tail_index - индексы из массива pts
@@ -90,7 +90,7 @@ class WindParticles:
     def step(self, center: np.ndarray, time: np.datetime64) -> None:
         """Продвинуть частицы по ветру, респавнить вышедшие, обновить меш."""
         self._time = time
-        center = np.array(center, dtype=float)
+        center = np.array(center, dtype=np.float32)
         shift = center - self._center
         if np.any(shift):
             # Переносим всё "облако" частиц за аэростатом

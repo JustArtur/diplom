@@ -1,29 +1,20 @@
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 
 import numpy as np
-from poetry.console.commands import self
 
+from diplom.config import SimulationConfig
 from diplom.sim.constants import (
     AIR_DRAG_COEFFICIENT,
     AIR_MOLAR_MASS,
     BALLOON_CROSS_SECTION,
     BALLOON_VOLUME,
     BALLOON_WEIGHT,
-    DEFAULT_AIR_WEIGHT,
+    ENERGY_COST_PER_KG,
     GAS_CONSTANT,
-    GRAVITY_ACCELERATION, INITIAL_POSITION, TARGET_POSITION, SIM_TIME, MIN_HEIGHT,
+    GRAVITY_ACCELERATION,
 )
-from diplom.wind.interp import WindInterpolator as WindInterp
-
-
-@dataclass
-class SimParams:
-    wind_interp: WindInterp
-    sim_time: np.datetime64 = SIM_TIME
-    initial_position: np.ndarray = field(default_factory=lambda: INITIAL_POSITION.copy())
-    target_position: np.ndarray = field(default_factory=lambda: TARGET_POSITION.copy())
-    initial_air_weight: float = DEFAULT_AIR_WEIGHT
+from diplom.shared_constants import MAX_HEIGHT, MAX_VERTICAL_SPEED, MIN_HEIGHT, WORLD_SIZE
+from diplom.wind.interp import WindInterpolator, WindSample
 
 
 @dataclass
@@ -41,18 +32,27 @@ class SimResult:
 
 
 class Simulation:
-    def __init__(self, ps: SimParams):
-        self.wind_interp = ps.wind_interp  # Интерполяция ветра
+    def __init__(self, config: SimulationConfig, wind_interp: WindInterpolator) -> None:
+        self.wind_interp = wind_interp
 
-        self.sim_time = ps.sim_time  # Время симуляции
-        self.position = ps.initial_position  # Текущая позиция
-        self.target_position = ps.target_position  # Позиция цели
-        self.air_weight = ps.initial_air_weight  # Кол во закаченного воздуха в старостат
+        self.sim_time = config.balloon.sim_time
+        self.position = np.array(config.balloon.initial_position, dtype=np.float32)
+        self.target_position = np.array(config.balloon.target_position, dtype=np.float32)
+        self.air_weight = np.float32(config.initial_air_weight)
 
-        self.vertical_speed = 0.0  # Вертикальная скорость
-        self.vertical_acceleration = 0.0  # Вертикальное ускорение
-        self.energy_spent = 0.0  # Потраченная энергия(на закачку воздуха)
-        self.air_density = 0.0
+        self.vertical_speed = np.float32(0.0)
+        self.vertical_acceleration = np.float32(0.0)
+        self.energy_spent = np.float32(0.0)
+        self.air_density = np.float32(0.0)
+
+    def _clamp_time(self) -> None:
+        self.sim_time = np.clip(self.sim_time, self.wind_interp.time_min, self.wind_interp.time_max)
+
+    def snapshot(self) -> SimResult:
+        """Собрать текущее состояние без шага по времени."""
+        self._clamp_time()
+        wind = self.interpolate_wind()
+        return self._build_result(wind)
 
     def step(self, dt: float, air_pump_speed: float) -> SimResult:
         """Снос аэростата ветром (горизонтальный + вертикальный).
@@ -64,53 +64,46 @@ class Simulation:
         """
         # np.datetime64 не умеет складываться с float, поэтому переводим dt в timedelta.
         self.sim_time += np.timedelta64(int(dt), "s")
-        wx, wy, wz, temperature, pressure = self.interpolate_wind
+        self._clamp_time()
+        wind = self.interpolate_wind()
 
-        air_mass_delta = air_pump_speed * dt
+        air_mass_delta = np.float32(air_pump_speed * dt)
 
-        self.air_weight = max(0.0, self.air_weight + air_mass_delta)
-        self.compute_vertical_speed(pressure, temperature, wz, dt)
-        self.energy_spent += abs(air_mass_delta) * 10.0
+        self.air_weight = np.maximum(np.float32(0.0), self.air_weight + air_mass_delta)
+        self._compute_vertical_speed(wind.pressure, wind.temperature, wind.w, dt)
+        self.energy_spent += np.abs(air_mass_delta) * np.float32(ENERGY_COST_PER_KG)
 
-        self.position[0] += wx * dt
-        self.position[1] += wy * dt
-        self.position[2] += max(self.vertical_speed * dt, MIN_HEIGHT)
+        self.position[0] = np.clip(self.position[0] + np.float32(wind.u) * dt, 0.0, WORLD_SIZE)
+        self.position[1] = np.clip(self.position[1] + np.float32(wind.v) * dt, 0.0, WORLD_SIZE)
+        # Ограничиваем саму высоту (не приращение) снизу и сверху допустимым диапазоном ERA5.
+        self.position[2] = np.clip(self.position[2] + self.vertical_speed * dt, MIN_HEIGHT, MAX_HEIGHT)
+        # Ограничиваем вертикальную скорость, чтобы предотвратить численный взрыв при сильном дисбалансе сил.
+        self.vertical_speed = np.clip(self.vertical_speed, -MAX_VERTICAL_SPEED, MAX_VERTICAL_SPEED)
 
-        return SimResult(
-            position=np.array(self.position, dtype=float),
-            target_position=np.array(self.target_position, dtype=float),
+        return self._build_result(wind)
 
-            wind=np.array([wx, wy, wz], dtype=float),
-            vertical_speed=self.vertical_speed,
-            vertical_acceleration=self.vertical_acceleration,
-            energy_spent=self.energy_spent,
-            air_density=self.air_density,
-            air_weight=self.air_weight,
-            temperature=temperature,
-            pressure=pressure
-        )
-
-    def gas_density(self, molar_mass, pressure, temperature):
+    def gas_density(self, molar_mass: float, pressure: float, temperature: float) -> float:
         """
         Из уравнения Менделеева-Клапейрона выводим формулу плотности газа:
         AIR_DENSITY = AIR_PRESSURE*AIR_MOLAR_MASS/(GAS_CONSTANT*AIR_TEMPERATURE(Kelvin))
         """
-        pressure_pa = pressure * 100.0
-        return (pressure_pa * molar_mass) / (GAS_CONSTANT * temperature)
+        pressure_pa = np.float32(pressure) * np.float32(100.0)
+        return np.float32((pressure_pa * molar_mass) / (GAS_CONSTANT * temperature))
 
-    def compute_vertical_speed(self, pressure, temperature, wz, dt):
+    def _compute_vertical_speed(self, pressure: float, temperature: float, wz: float, dt: float) -> None:
         """
         По второму закону Ньютона:
         a = (F_archimedes - F_weight - F_drag) / m
         """
-        self.air_density = self.gas_density(AIR_MOLAR_MASS, pressure, temperature)
-        total_mass = BALLOON_WEIGHT + self.air_weight
-        archimedes_force = self.air_density * GRAVITY_ACCELERATION * BALLOON_VOLUME
-        weight_force = total_mass * GRAVITY_ACCELERATION
-        drag_force = self._drag_force(self.air_density)
-        self.vertical_acceleration = (archimedes_force - weight_force - drag_force) / total_mass
+        # Физика баллона считается по плотности воздуха и силам Архимеда/тяжести/сопротивления.
+        self.air_density = np.float32(self.gas_density(AIR_MOLAR_MASS, pressure, temperature))
+        total_mass = np.float32(BALLOON_WEIGHT) + self.air_weight
+        archimedes_force = self.air_density * np.float32(GRAVITY_ACCELERATION) * np.float32(BALLOON_VOLUME)
+        weight_force = total_mass * np.float32(GRAVITY_ACCELERATION)
+        drag_force = np.float32(self._drag_force(float(self.air_density)))
+        self.vertical_acceleration = np.float32((archimedes_force - weight_force - drag_force) / total_mass)
 
-        self.vertical_speed += self.vertical_acceleration * dt + wz
+        self.vertical_speed = np.float32(self.vertical_speed + self.vertical_acceleration * dt + np.float32(wz))
 
     def _drag_force(self, air_density: float) -> float:
         """Лобовое сопротивление по вертикали, направленное против движения."""
@@ -120,5 +113,20 @@ class Simulation:
         drag = 0.5 * air_density * AIR_DRAG_COEFFICIENT * BALLOON_CROSS_SECTION * speed ** 2
         return drag if speed > 0 else -drag
 
-    def interpolate_wind(self):
+    def interpolate_wind(self) -> WindSample:
         return self.wind_interp.vector_at(self.position[0], self.position[1], self.position[2], self.sim_time)
+
+    def _build_result(self, wind: WindSample) -> SimResult:
+        """Собрать объект результата из текущего внутреннего состояния."""
+        return SimResult(
+            position=np.array(self.position, dtype=np.float32),
+            target_position=np.array(self.target_position, dtype=np.float32),
+            vertical_speed=self.vertical_speed,
+            vertical_acceleration=self.vertical_acceleration,
+            energy_spent=self.energy_spent,
+            air_density=self.air_density,
+            air_weight=self.air_weight,
+            wind=np.array([wind.u, wind.v, wind.w], dtype=np.float32),
+            temperature=wind.temperature,
+            pressure=wind.pressure,
+        )

@@ -1,15 +1,12 @@
 """Интерактивная 3D-визуализация стратосферного аэростата в ветровом поле."""
 
 import time
-from datetime import datetime
 from functools import partial
-from typing import Callable, Optional
 
 import numpy as np
 import pyvista as pv
-from huey.utils import utcnow
-from sympy.physics.pring import energy
 
+from diplom.shared_constants import WORLD_SIZE
 from diplom.wind.interp import WindInterpolator
 
 from .constants import (
@@ -21,13 +18,11 @@ from .constants import (
     CAMERA_INITIAL_OFFSET,
     CAMERA_INITIAL_VIEW_UP,
     CAMERA_ORBIT_RADIUS,
-    INITIAL_HEIGHT,
     MAX_FRAME_DELTA_S,
     DEFAULT_AIR_PUMP_SPEED,
     MIN_TICK_INTERVAL_S,
     ROPE_BOTTOM_Z,
     ROPE_TOP_Z,
-    TARGET_POSITION,
     TARGET_RADIUS,
     TERRAIN_AMP_COS,
     TERRAIN_AMP_SIN,
@@ -35,11 +30,10 @@ from .constants import (
     TERRAIN_FREQ_SIN,
     TERRAIN_RESOLUTION,
     WIND_SPEED_MAX_COLOR,
-    WORLD_SIZE,
 )
 from .hud import BalloonHUD, HudState
 from .particles import WindParticles
-from ..sim.simulation import Simulation, SimParams
+from ..sim.simulation import Simulation
 
 
 class BalloonSimulation:
@@ -51,15 +45,15 @@ class BalloonSimulation:
 
     # ──────────────────── Инициализация ────────────────────
     def __init__(self, *, wind_interpolator: WindInterpolator, plotter: pv.Plotter, hud: BalloonHUD,
-                 sim_start_time: np.datetime64, sim: Simulation) -> None:
+                 sim: Simulation) -> None:
         # ── Физическое состояние ──
-        self.position = np.array([0.0, 0.0, INITIAL_HEIGHT])  # [x, y, z] (м)
-        self.target_position = TARGET_POSITION  # позиция цели
-        self.air_pump_speed = 0.0  # скорость закачки/выпуска воздуха (кг/с)
+        self.position = sim.position.copy()
+        self.target_position = sim.target_position.copy()
+        self.air_pump_speed = 0.0
 
         # ── Время ──
         self.start_time = time.monotonic()
-        self.sim_time = sim_start_time
+        self.sim_time = sim.sim_time
         self._last_tick = self.start_time
 
         # ── Ветер ──
@@ -178,7 +172,7 @@ class BalloonSimulation:
     def _follow_camera(self) -> None:
         """Переместить камеру за аэростатом, сохраняя направление взгляда."""
         cam = self.plotter.camera
-        direction = np.asarray(cam.position, dtype=float) - np.asarray(cam.focal_point, dtype=float)
+        direction = np.asarray(cam.position, dtype=np.float32) - np.asarray(cam.focal_point, dtype=np.float32)
 
         dist = float(np.linalg.norm(direction))
         # Нормализуем вектор

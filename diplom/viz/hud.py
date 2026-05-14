@@ -9,6 +9,8 @@ from typing import Callable, Optional, Tuple
 import numpy as np
 import pyvista as pv
 
+from .constants import HUD_FONT_FILE
+
 
 @dataclass(frozen=True)
 class HudState:
@@ -27,8 +29,6 @@ class HudState:
 
 class BalloonHUD:
     """Текстовый HUD, отображаемый поверх 3D-сцены PyVista."""
-
-    _FONT_FILE = "/System/Library/Fonts/Supplemental/Arial.ttf"
 
     def __init__(
         self,
@@ -49,13 +49,17 @@ class BalloonHUD:
 
     def update(self, state: HudState) -> None:
         """Перерисовать HUD с актуальным состоянием."""
+        kwargs: dict = {}
+        if HUD_FONT_FILE is not None:
+            kwargs["font_file"] = HUD_FONT_FILE
+
         self._plotter.add_text(
             self._format(state),
             position=self._position,
             font_size=self._font_size,
             color=self._color,
-            font_file=self._FONT_FILE,
             name=self._name,
+            **kwargs,
         )
 
     def _format(self, state: HudState) -> str:
