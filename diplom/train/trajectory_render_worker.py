@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from diplom.world import WorldBounds
 from diplom.viz.trajectory_plot import (
     EpisodeVizData,
     TrajectoryBounds,
@@ -29,6 +30,7 @@ class TrajectoryRenderRequest:
     episode_counts: dict[int, int]
     history: dict[int, list[dict[str, Any]]]
     current_steps: dict[int, list[dict[str, Any]]]
+    world_bounds: WorldBounds | None = None
 
 
 def start_trajectory_render_worker(
@@ -81,6 +83,7 @@ def submit_trajectory_render(task_queue: Queue | None, request: TrajectoryRender
         "episode_counts": request.episode_counts,
         "history": request.history,
         "current_steps": request.current_steps,
+        "world_bounds": request.world_bounds,
     }
 
     try:
@@ -111,6 +114,8 @@ def _render_worker_main(task_queue: Queue, output_dir: Path) -> None:
                 _render_snapshot(request, output_dir)
             except Exception:  # noqa: BLE001
                 traceback.print_exc()
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
 
 
 def _decode_request(task: Mapping[str, Any]) -> TrajectoryRenderRequest:
@@ -126,6 +131,7 @@ def _decode_request(task: Mapping[str, Any]) -> TrajectoryRenderRequest:
             int(env_idx): [dict(step) for step in steps]
             for env_idx, steps in task["current_steps"].items()
         },
+        world_bounds=task.get("world_bounds"),
     )
 
 
@@ -154,7 +160,7 @@ def _render_snapshot(
 
     all_episodes = [ep for env_hist in history.values() for ep in env_hist]
     all_current = [step for steps in current_steps.values() for step in steps]
-    bounds = compute_trajectory_bounds(all_episodes, all_current)
+    bounds = compute_trajectory_bounds(all_episodes, all_current, world_bounds=request.world_bounds)
 
     for env_idx in range(request.n_envs):
         history_items = history.get(env_idx, [])

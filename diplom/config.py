@@ -13,28 +13,42 @@ from diplom.envs.constants import (
     TRAIN_INITIAL_POSITION_DELTA,
     TRAIN_TARGET_POSITION_DELTA,
 )
-from diplom.shared_constants import INITIAL_POSITION, TARGET_POSITION
 from diplom.sim.constants import DEFAULT_AIR_WEIGHT, SIM_TIME
 from diplom.viz.constants import WINDOW_SIZE
-from diplom.wind.constants import DEFAULT_ORIGIN_LAT, DEFAULT_ORIGIN_LON, DEFAULT_WIND_DATA_PATH
+from diplom.wind.constants import DEFAULT_WIND_DATA_PATH
 
 
 # Набор уровней давления ERA5, которые используем для обучения и симуляции по умолчанию.
 DEFAULT_PRESSURE_LEVELS: tuple[str, ...] = (
-    "1000",
-    "925",
-    "850",
-    "700",
-    "600",
-    "500",
-    "400",
-    "300",
-    "250",
-    "200",
-    "150",
-    "100",
-    "70",
-    "50",
+    '1000',
+    '900',
+    '800',
+    '700'
+    '650',
+    '600',
+    '550',
+    '500',
+    '450',
+    '400',
+    '350',
+    '300',
+    '250',
+    '200',
+    '150',
+    '100',
+    '90',
+    '80'
+    '70',
+    '60',
+    '50',
+    '40',
+    '30',
+    '25',
+    '20',
+    '15',
+    '10',
+    '5',
+    '1'
 )
 
 # Набор переменных ERA5, нужных для расчёта ветра, температуры и вертикального движения.
@@ -50,9 +64,11 @@ DEFAULT_VARIABLES: tuple[str, ...] = (
 @dataclass(frozen=True, slots=True)
 class BalloonConfig:
     # Базовая стартовая позиция аэростата в локальной системе координат.
-    initial_position: np.ndarray = field(default_factory=lambda: INITIAL_POSITION.copy())
+    # Если не задана, будет подставлена из географических границ датасета.
+    initial_position: np.ndarray | None = None
     # Базовая целевая точка, к которой должен стремиться агент.
-    target_position: np.ndarray = field(default_factory=lambda: TARGET_POSITION.copy())
+    # Если не задана, будет подставлена из географических границ датасета.
+    target_position: np.ndarray | None = None
     # Стартовое модельное время, которое используется для запроса ветра.
     sim_time: np.datetime64 = SIM_TIME
 
@@ -62,13 +78,13 @@ class DownloadConfig:
     # Куда сохранять скачанный ERA5-файл.
     outfile: Path = Path("data/era5_sample.nc")
     # Северная граница области запроса.
-    north: float = 90.0
+    north: float = 64.0
     # Западная граница области запроса.
-    west: float = 60.0
+    west: float = 45.0
     # Южная граница области запроса.
-    south: float = 40.0
+    south: float = 47.0
     # Восточная граница области запроса.
-    east: float = 60.0
+    east: float = 62.0
     # Начало периода скачивания.
     start: str = "2024-07-01"
     # Конец периода скачивания.
@@ -83,10 +99,12 @@ class DownloadConfig:
 class WindConfig:
     # Путь к NetCDF-файлу с данными ветра.
     path: Path = DEFAULT_WIND_DATA_PATH
-    # Опорная широта, от которой строится локальная система координат.
-    origin_lat: float = DEFAULT_ORIGIN_LAT
-    # Опорная долгота, от которой строится локальная система координат.
-    origin_lon: float = DEFAULT_ORIGIN_LON
+    # Опорная широта для локальной системы координат.
+    # Если не задана, будет взята из фактической юго-западной границы файла.
+    origin_lat: float | None = None
+    # Опорная долгота для локальной системы координат.
+    # Если не задана, будет взята из фактической юго-западной границы файла.
+    origin_lon: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

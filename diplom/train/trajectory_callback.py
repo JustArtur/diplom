@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
+from diplom.world import WorldBounds
 from diplom.viz.trajectory_plot import EpisodeVizData
 from diplom.train.trajectory_render_worker import (
     TrajectoryRenderRequest,
@@ -50,11 +51,13 @@ class TrajectoryVisualizationCallback(BaseCallback):
 
         # Счётчик завершённых эпизодов по env_idx (для метки на графике).
         self._episode_counts: Dict[int, int] = defaultdict(int)
+        self._world_bounds: WorldBounds | None = None
 
     # ──────────────────── Жизненный цикл ────────────────────
 
     def _on_training_start(self) -> None:
         self._output_dir.mkdir(parents=True, exist_ok=True)
+        self._world_bounds = _get_world_bounds(self.training_env)
         try:
             self._render_queue, self._render_process = start_trajectory_render_worker(
                 ctx=self._ctx,
@@ -128,6 +131,7 @@ class TrajectoryVisualizationCallback(BaseCallback):
                 env_idx: [dict(step) for step in steps]
                 for env_idx, steps in self._current_steps.items()
             },
+            world_bounds=self._world_bounds,
         )
         submit_trajectory_render(self._render_queue, payload)
 
@@ -155,3 +159,20 @@ def _extract_step(info: Dict[str, Any]) -> dict:
             np.asarray(info.get("target_position", [0.0, 0.0, 0.0]), dtype=np.float32)
         ),
     }
+
+
+def _get_world_bounds(training_env) -> WorldBounds | None:
+    """Попробовать вытащить общие границы мира из VecEnv."""
+    if training_env is None:
+        return None
+
+    try:
+        bounds_list = training_env.get_attr("world_bounds")
+    except Exception:  # noqa: BLE001
+        return None
+
+    if not bounds_list:
+        return None
+
+    bounds = bounds_list[0]
+    return bounds if isinstance(bounds, WorldBounds) else None

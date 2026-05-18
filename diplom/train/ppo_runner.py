@@ -14,19 +14,27 @@ from diplom.config import AppConfig, EnvironmentConfig, WindConfig
 from diplom.envs.balloon_env import BalloonEnv
 from diplom.envs.factory import build_env
 from diplom.train.info_logging_callback import InfoLoggingCallback
+from diplom.world import log_world_bounds
+from diplom.wind.factory import build_wind_interpolator
+from diplom.wind.interp import ensure_wind_interpolator_cache
 
 
-def _env_factory(env_config: EnvironmentConfig, wind_config: WindConfig) -> BalloonEnv:
+def _env_factory(
+    env_config: EnvironmentConfig,
+    wind_config: WindConfig,
+    env_idx: int | None = None,
+) -> BalloonEnv:
     """Создаёт одну среду внутри рабочего подпроцесса.
 
     Функция должна быть определена на уровне модуля (не lambda и не closure),
     чтобы pickle мог сериализовать её при передаче в SubprocVecEnv.
     """
-    return build_env(env_config, wind_config)
+    return build_env(env_config, wind_config, env_idx=env_idx)
 
 
 def _make_vec_env(config: AppConfig) -> Union[DummyVecEnv, SubprocVecEnv]:
     n_envs = max(1, config.training.n_envs)
+    ensure_wind_interpolator_cache(config.wind.path)
     # Включаем рандомизацию старта — нужна при обучении.
     env_config = replace(
         config.environment,
@@ -35,15 +43,19 @@ def _make_vec_env(config: AppConfig) -> Union[DummyVecEnv, SubprocVecEnv]:
     )
     # partial — picklable, в отличие от lambda; именно это позволяет SubprocVecEnv
     # передавать фабрику через pickle в дочерний процесс.
-    factory = partial(_env_factory, env_config=env_config, wind_config=config.wind)
-
     if n_envs == 1:
         # Один процесс — нет смысла в оверхеде IPC.
-        return DummyVecEnv([factory])
+        return DummyVecEnv([partial(_env_factory, env_config=env_config, wind_config=config.wind, env_idx=0)])
 
     # start_method="spawn" безопасен на macOS и Windows (fork может дедлочить
     # внутренние потоки xarray/netCDF4).
-    return SubprocVecEnv([factory] * n_envs, start_method="spawn")
+    return SubprocVecEnv(
+        [
+            partial(_env_factory, env_config=env_config, wind_config=config.wind, env_idx=env_idx)
+            for env_idx in range(n_envs)
+        ],
+        start_method="spawn",
+    )
 
 
 def _select_device() -> str:
@@ -83,6 +95,18 @@ def train_ppo(config: AppConfig, callbacks: Sequence[BaseCallback] | None = None
     vec_env = _make_vec_env(config)
     eval_env = None
     info_callback = InfoLoggingCallback()
+
+    probe_interp = build_wind_interpolator(config.wind)
+    try:
+        log_world_bounds(
+            probe_interp.world_bounds,
+            origin_lat=probe_interp.origin_lat,
+            origin_lon=probe_interp.origin_lon,
+            wind_path=config.wind.path,
+            prefix="[train_ppo]",
+        )
+    finally:
+        probe_interp.close()
 
     traj_dir = _next_run_dir(logdir / "trajectories")
     traj_callback = TrajectoryVisualizationCallback(
@@ -141,7 +165,7 @@ def train_ppo(config: AppConfig, callbacks: Sequence[BaseCallback] | None = None
 
         # Простой контрольный прогон на отдельной среде после обучения.
         # Здесь отключаем рандомизацию, чтобы получить детерминированную оценку.
-        eval_env = build_env(env_config=config.environment, wind_config=config.wind)
+        eval_env = build_env(env_config=config.environment, wind_config=config.wind, env_idx=0)
         obs, _ = eval_env.reset(seed=config.training.seed + 1)
         done = False
         truncated = False

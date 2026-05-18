@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from pathlib import Path
-
 from datetime import datetime
+from pathlib import Path
+from typing import Optional
 import webbrowser
 
 import numpy as np
@@ -250,6 +250,7 @@ def rollout(
             compute_trajectory_bounds,
             save_figure,
         )
+        from diplom.wind.factory import build_wind_interpolator
 
         viz_episodes = [
             EpisodeVizData(
@@ -264,14 +265,161 @@ def rollout(
             )
             for idx, result in enumerate(results)
         ]
-        bounds = compute_trajectory_bounds(viz_episodes)
-        fig = build_figure(
-            episodes=viz_episodes,
-            title=f"Rollout · {model_path.name} · {episodes} эпизодов",
-            bounds=bounds,
-        )
+        wind_interpolator = build_wind_interpolator(app_config.wind)
+        try:
+            bounds = compute_trajectory_bounds(viz_episodes, world_bounds=wind_interpolator.world_bounds)
+            fig = build_figure(
+                episodes=viz_episodes,
+                title=f"Rollout · {model_path.name} · {episodes} эпизодов",
+                bounds=bounds,
+            )
+        finally:
+            wind_interpolator.close()
         save_figure(fig, plot_output)
         typer.echo(f"plot saved={plot_output}")
+
+
+# ──────────────────── wind_viz ────────────────────
+
+@app.command("wind-viz")
+def wind_viz(
+    wind_file: Path = typer.Option(
+        Path("data/era5_sample.nc"),
+        "--wind-file", "-f",
+        help="Путь к ERA5 NetCDF-файлу",
+    ),
+    time: Optional[datetime] = typer.Option(
+        None,
+        "--time", "-t",
+        help=(
+            "Временна́я метка среза ERA5 (ISO 8601, например 2024-07-01T12:00:00). "
+            "Если не задано — используется первый временной шаг датасета."
+        ),
+        formats=[
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M",
+            "%Y-%m-%d",
+        ],
+    ),
+    output: Path = typer.Option(
+        Path("runs/wind/wind_field.html"),
+        "--output", "-o",
+        help="Куда сохранить HTML-файл с графиком",
+    ),
+    stride_lon: int = typer.Option(
+        1, "--stride-lon",
+        help="Прореживание по долготе (1 = каждая точка, 2 = через одну, ...)",
+    ),
+    stride_lat: int = typer.Option(
+        1, "--stride-lat",
+        help="Прореживание по широте",
+    ),
+    stride_level: float = typer.Option(
+        5000.0,
+        "--stride-level",
+        help="Шаг по давлению между конусами, Па (ветер интерполируется; например 500 ≈ 5 гПа, 5000 ≈ 50 гПа)",
+    ),
+    w_scale: float = typer.Option(
+        0.0, "--w-scale",
+        help="Масштаб вертикальной компоненты w для наглядности стрелок",
+    ),
+    open_browser: bool = typer.Option(
+        True, "--open/--no-open",
+        help="Открыть результат в браузере после сохранения",
+    ),
+    list_times: bool = typer.Option(
+        False, "--list-times",
+        help="Вывести все доступные временны́е метки в датасете и выйти",
+    ),
+) -> None:
+    """Построить интерактивный 3D-граф поля ветра ERA5.
+
+    Конусы показывают направление и скорость ветра на всех высотах,
+    широтах и долготах для выбранного временного среза ERA5.
+
+    Примеры:
+
+    \b
+      # Список доступных временных меток
+      diplom wind-viz --list-times
+
+    \b
+      # График на конкретное время с прореживанием
+      diplom wind-viz --time 2024-07-01T12:00:00 --stride-lat 2 --stride-lon 2 --stride-level 3000
+    """
+    from diplom.viz.wind_plot import (
+        build_wind_figure,
+        list_available_times,
+        load_wind_slice,
+        save_figure,
+    )
+
+    if not wind_file.exists():
+        typer.echo(
+            f"[ошибка] Файл ERA5 не найден: {wind_file}\n"
+            "Скачайте данные командой: diplom download",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if list_times:
+        available = list_available_times(wind_file)
+        typer.echo(f"Доступные временны́е метки в {wind_file}:")
+        for t in available:
+            typer.echo(f"  {t}")
+        return
+
+    # Если время не задано — берём первый шаг датасета
+    target_time: np.datetime64
+    if time is None:
+        available = list_available_times(wind_file)
+        if not available:
+            typer.echo("[ошибка] Датасет не содержит временны́х шагов.", err=True)
+            raise typer.Exit(code=1)
+        target_time = available[0]
+        typer.echo(f"--time не задано, используется первый шаг: {target_time}")
+    else:
+        target_time = np.datetime64(time)
+
+    typer.echo(f"Загружаю срез ERA5: {wind_file} @ {target_time} …")
+    wind_slice = load_wind_slice(wind_file, target_time)
+    typer.echo(
+        f"Срез загружен · время={wind_slice.time} "
+        f"· уровней={len(wind_slice.pressure)} "
+        f"· lat={len(wind_slice.lat)} · lon={len(wind_slice.lon)}"
+    )
+
+    from diplom.world import log_world_bounds, world_bounds_from_axes
+
+    wb = world_bounds_from_axes(
+        np.asarray(wind_slice.lat, dtype=np.float64),
+        np.asarray(wind_slice.lon, dtype=np.float64),
+        origin_lat=wind_slice.origin_lat,
+        origin_lon=wind_slice.origin_lon,
+        pressure_axis_hpa=np.asarray(wind_slice.pressure, dtype=np.float64),
+    )
+    log_world_bounds(
+        wb,
+        origin_lat=wind_slice.origin_lat,
+        origin_lon=wind_slice.origin_lon,
+        wind_path=wind_file,
+        prefix="[wind-viz]",
+    )
+
+    fig = build_wind_figure(
+        wind_slice,
+        stride_lon=stride_lon,
+        stride_lat=stride_lat,
+        stride_level=stride_level,
+        w_scale=w_scale,
+    )
+
+    save_figure(fig, output)
+    typer.echo(f"График сохранён: {output}")
+
+    if open_browser:
+        webbrowser.open(output.resolve().as_uri())
 
 
 # ──────────────────── Точка входа ────────────────────

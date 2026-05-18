@@ -1,8 +1,16 @@
-"""Интерполятор ветрового поля ERA5 (u, v, w) в локальных метровых координатах."""
+"""Интерполятор ветрового поля ERA5 (u, v, w) в локальных метровых координатах.
+
+Тяжёлые массивы интерполятора кэшируются в отдельный `.npy`-файл и
+подключаются через `np.memmap`, чтобы несколько процессов могли разделять
+одну файловую копию данных вместо дублирования памяти.
+"""
 
 from __future__ import annotations
 
-import math
+import json
+import os
+import uuid
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Tuple
@@ -11,53 +19,8 @@ import numpy as np
 import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
 
-
-# ──────────────────── Геометрические утилиты ────────────────────
-
-
-def meters_per_deg_lat(latitude_deg: float) -> float:
-    """Приблизительное число метров в одном градусе широты (WGS84).
-
-    Ряд Фурье по геодезической модели WGS-84:
-        M(φ) ≈ 111132.92 − 559.82·cos(2φ) + 1.175·cos(4φ) − 0.0023·cos(6φ)
-    """
-    lat_rad = math.radians(latitude_deg)
-    return 111132.92 - 559.82 * math.cos(2 * lat_rad) + 1.175 * math.cos(4 * lat_rad) - 0.0023 * math.cos(6 * lat_rad)
-
-
-def meters_per_deg_lon(latitude_deg: float) -> float:
-    """Приблизительное число метров в одном градусе долготы (WGS84).
-
-    Ряд Фурье по геодезической модели WGS-84:
-        N(φ) ≈ 111412.84·cos(φ) − 93.5·cos(3φ) + 0.118·cos(5φ)
-    """
-    lat_rad = math.radians(latitude_deg)
-    return 111412.84 * math.cos(lat_rad) - 93.5 * math.cos(3 * lat_rad) + 0.118 * math.cos(5 * lat_rad)
-
-
-def altitude_to_pressure_hpa(height_m: np.ndarray) -> np.ndarray:
-    """Давление (гПа) по высоте через барометрическую формулу стандартной атмосферы.
-
-    Барометрическая формула ISA(международная стандартная атмосфера) (ниже тропопаузы ≈ 11 км):
-        p(h) = p₀ · (1 − L·h / T₀) ^ (g·M / (R·L))
-
-    где p₀ = 1013.25 гПа, T₀ = 288.15 K, L = 0.0065 K/м,
-        g = 9.80665 м/с², M = 0.0289644 кг/моль, R = 8.31447 Дж/(моль·К).
-    """
-    p0 = 1013.25  # гПа
-    T0 = 288.15  # K
-    g = 9.80665  # м/с²
-    L = 0.0065  # K/м (температурный градиент тропосферы)
-    R = 8.31447  # Дж/(моль·К) — универсальная газовая постоянная
-    M = 0.0289644  # кг/моль — молярная масса сухого воздуха
-
-    height = np.asarray(height_m, dtype=np.float32)
-    # Формула ISA корректна только ниже ~44.3 км; выше этого порога база степени становится невалидной.
-    max_height = (T0 / L) - 1e-6
-    height = np.clip(height, 0.0, max_height)
-    # показатель степени: g·M / (R·L) ≈ 5.2559
-    exponent = (g * M) / (R * L)
-    return np.asarray(p0 * np.power(1 - (L * height) / T0, exponent), dtype=np.float32)
+from diplom.geo import altitude_to_pressure_hpa, meters_per_deg_lat, meters_per_deg_lon
+from diplom.world import WorldBounds, world_bounds_from_axes
 
 
 # ──────────────────── Конвертация вертикальной скорости ────────────────────
@@ -106,6 +69,162 @@ _LEVEL_NAME = "pressure_level"
 _TIME_NAME = "valid_time"
 
 
+# ──────────────────── Кэш интерполятора ────────────────────
+
+_CACHE_VALUE_SUFFIX = ".wind-cache.npy"
+_CACHE_META_SUFFIX = ".wind-cache.json"
+
+
+def _cache_value_path(source_path: Path) -> Path:
+    return source_path.with_name(f"{source_path.name}{_CACHE_VALUE_SUFFIX}")
+
+
+def _cache_meta_path(source_path: Path) -> Path:
+    return source_path.with_name(f"{source_path.name}{_CACHE_META_SUFFIX}")
+
+
+def _source_signature(source_path: Path) -> dict[str, int | str]:
+    stat = source_path.stat()
+    return {
+        "source_path": str(source_path.resolve()),
+        "source_mtime_ns": int(stat.st_mtime_ns),
+        "source_size": int(stat.st_size),
+    }
+
+
+def _is_cache_valid(source_path: Path, value_path: Path, meta_path: Path) -> bool:
+    if not value_path.exists() or not meta_path.exists():
+        return False
+
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    try:
+        signature = _source_signature(source_path)
+    except OSError:
+        return False
+
+    required_keys = {"source_path", "source_mtime_ns", "source_size", "grid_shape"}
+    if not required_keys.issubset(meta):
+        return False
+
+    return (
+        str(meta["source_path"]) == signature["source_path"]
+        and int(meta["source_mtime_ns"]) == signature["source_mtime_ns"]
+        and int(meta["source_size"]) == signature["source_size"]
+    )
+
+
+def _write_cache(
+    *,
+    source_path: Path,
+    value_path: Path,
+    meta_path: Path,
+    time_axis_ns: np.ndarray,
+    pressure_axis_hpa: np.ndarray,
+    latitude_axis_deg: np.ndarray,
+    longitude_axis_deg: np.ndarray,
+    u_data: np.ndarray,
+    v_data: np.ndarray,
+    w_data: np.ndarray,
+    t_data: np.ndarray,
+) -> None:
+    """Собрать кэш интерполятора в одном memmap-файле."""
+    token = uuid.uuid4().hex
+    tmp_value_path = value_path.with_name(f".{value_path.name}.{token}.tmp")
+    tmp_meta_path = meta_path.with_name(f".{meta_path.name}.{token}.tmp")
+
+    try:
+        values = np.lib.format.open_memmap(
+            tmp_value_path,
+            mode="w+",
+            dtype=np.float32,
+            shape=(4, *u_data.shape),
+        )
+        values[0] = u_data
+        values[1] = v_data
+        values[2] = w_data
+        values[3] = t_data
+        values.flush()
+        del values
+
+        meta = {
+            **_source_signature(source_path),
+            "grid_shape": [int(dim) for dim in u_data.shape],
+            "time_axis_ns": [int(value) for value in time_axis_ns],
+            "pressure_axis_hpa": [float(value) for value in pressure_axis_hpa],
+            "latitude_axis_deg": [float(value) for value in latitude_axis_deg],
+            "longitude_axis_deg": [float(value) for value in longitude_axis_deg],
+        }
+        tmp_meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        os.replace(tmp_value_path, value_path)
+        os.replace(tmp_meta_path, meta_path)
+    except Exception:
+        for path in (tmp_value_path, tmp_meta_path):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        raise
+
+
+def ensure_wind_interpolator_cache(source_path: Path) -> tuple[Path, Path]:
+    """Обеспечить наличие валидного кэша интерполятора на диске рядом с NetCDF.
+
+    Не создаёт объект интерполяции — только записывает memmap-пакет и метаданные,
+    если кэша ещё нет или источник изменился.
+
+    Возвращает пути к файлам значений и метаданных для ``WindInterpolator``.
+    """
+    value_path = _cache_value_path(source_path)
+    meta_path = _cache_meta_path(source_path)
+    if _is_cache_valid(source_path, value_path, meta_path):
+        return value_path, meta_path
+
+    with xr.open_dataset(source_path) as ds:
+        times_raw = ds[_TIME_NAME].values.astype("datetime64[ns]")
+        levels_raw = ds[_LEVEL_NAME].values.astype(np.float64)
+        lats_raw = ds[_LAT_NAME].values.astype(np.float64)
+        lons_raw = ds[_LON_NAME].values.astype(np.float64)
+
+        t_idx = np.argsort(times_raw)
+        l_idx = np.argsort(levels_raw)
+        lat_idx = np.argsort(lats_raw)
+        lon_idx = np.argsort(lons_raw)
+
+        time_axis_ns = times_raw[t_idx].astype("datetime64[ns]").astype(np.int64)
+        pressure_axis_hpa = levels_raw[l_idx].astype(np.float64)
+        latitude_axis_deg = lats_raw[lat_idx].astype(np.float64)
+        longitude_axis_deg = lons_raw[lon_idx].astype(np.float64)
+
+        def _sorted_values(var_name: str) -> np.ndarray:
+            arr = ds[var_name].values.astype(np.float32)
+            return arr[np.ix_(t_idx, l_idx, lat_idx, lon_idx)]
+
+        u_data = np.nan_to_num(_sorted_values(_WIND_U_NAME), nan=0.0, posinf=0.0, neginf=0.0)
+        v_data = np.nan_to_num(_sorted_values(_WIND_V_NAME), nan=0.0, posinf=0.0, neginf=0.0)
+        w_data = np.nan_to_num(_sorted_values(_WIND_W_NAME), nan=0.0, posinf=0.0, neginf=0.0)
+        t_data = np.nan_to_num(_sorted_values(_WIND_T_NAME), nan=288.15, posinf=288.15, neginf=288.15)
+
+    _write_cache(
+        source_path=source_path,
+        value_path=value_path,
+        meta_path=meta_path,
+        time_axis_ns=time_axis_ns,
+        pressure_axis_hpa=pressure_axis_hpa,
+        latitude_axis_deg=latitude_axis_deg,
+        longitude_axis_deg=longitude_axis_deg,
+        u_data=u_data,
+        v_data=v_data,
+        w_data=w_data,
+        t_data=t_data,
+    )
+    return value_path, meta_path
+
+
 # ──────────────────── Результат интерполяции ────────────────────
 
 @dataclass(frozen=True)
@@ -126,21 +245,27 @@ class WindSample:
 class WindInterpolator:
     """Интерполятор ERA5: (x_м, y_м, z_м, time) → (u, v, w) м/с.
 
-    При инициализации все данные ERA5 конвертируются в numpy-массивы и
-    строятся scipy.RegularGridInterpolator — это происходит один раз,
-    зато каждый вызов vector_at() работает в ~50–100× быстрее, чем
-    xarray.interp().
+    При инициализации данные загружаются из кэша на диске, а не из NetCDF,
+    поэтому несколько subprocess-ов могут разделять одну файловую копию
+    массивов через `memmap`.
     """
 
-    ds: xr.Dataset
+    data: np.ndarray
+    env_idx: int | None
     origin_lat: float
     origin_lon: float
+    time_axis_ns: np.ndarray
+    pressure_axis_hpa: np.ndarray
+    latitude_axis_deg: np.ndarray
+    longitude_axis_deg: np.ndarray
+    world_bounds: WorldBounds = field(init=False, repr=False)
 
     # scipy-интерполяторы — строятся в __post_init__, не передаются извне
     _interp_u: RegularGridInterpolator = field(init=False, repr=False)
     _interp_v: RegularGridInterpolator = field(init=False, repr=False)
     _interp_w: RegularGridInterpolator = field(init=False, repr=False)
     _interp_t: RegularGridInterpolator = field(init=False, repr=False)
+    _time_axis_float: np.ndarray = field(init=False, repr=False)
     _lat_min: float = field(init=False, repr=False)
     _lat_max: float = field(init=False, repr=False)
     _lon_min: float = field(init=False, repr=False)
@@ -149,62 +274,48 @@ class WindInterpolator:
     _p_max: float = field(init=False, repr=False)
     _time_min: np.datetime64 = field(init=False, repr=False)
     _time_max: np.datetime64 = field(init=False, repr=False)
+    _warned_dataset_bounds: bool = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self.data = np.asarray(self.data)
+        self.time_axis_ns = np.asarray(self.time_axis_ns, dtype=np.int64)
+        self.pressure_axis_hpa = np.asarray(self.pressure_axis_hpa, dtype=np.float64)
+        self.latitude_axis_deg = np.asarray(self.latitude_axis_deg, dtype=np.float64)
+        self.longitude_axis_deg = np.asarray(self.longitude_axis_deg, dtype=np.float64)
+        self._time_axis_float = self.time_axis_ns.astype(np.float64)
+        self._warned_dataset_bounds = False
         self._build_scipy_interpolators()
 
     def _build_scipy_interpolators(self) -> None:
-        """Конвертировать ERA5 xr.Dataset в scipy RegularGridInterpolator.
+        """Собрать `RegularGridInterpolator` поверх общего кэша."""
+        self._lat_min = float(self.latitude_axis_deg[0])
+        self._lat_max = float(self.latitude_axis_deg[-1])
+        self._lon_min = float(self.longitude_axis_deg[0])
+        self._lon_max = float(self.longitude_axis_deg[-1])
+        self.world_bounds = world_bounds_from_axes(
+            self.latitude_axis_deg,
+            self.longitude_axis_deg,
+            origin_lat=self.origin_lat,
+            origin_lon=self.origin_lon,
+            pressure_axis_hpa=self.pressure_axis_hpa,
+        )
+        self._p_min = float(self.pressure_axis_hpa[0])
+        self._p_max = float(self.pressure_axis_hpa[-1])
+        self._time_min = np.datetime64(int(self.time_axis_ns[0]), "ns")
+        self._time_max = np.datetime64(int(self.time_axis_ns[-1]), "ns")
 
-        RegularGridInterpolator требует строго монотонно возрастающих осей,
-        поэтому каждую ось сортируем и при необходимости переставляем данные.
-        """
-        ds = self.ds
-
-        # ── Извлечь оси ──────────────────────────────────────────────────────
-        times_raw = ds[_TIME_NAME].values.astype("datetime64[ns]").astype(np.float64)
-        levels_raw = ds[_LEVEL_NAME].values.astype(np.float64)
-        lats_raw = ds[_LAT_NAME].values.astype(np.float64)
-        lons_raw = ds[_LON_NAME].values.astype(np.float64)
-
-        # ── Индексы сортировки для монотонности ───────────────────────────────
-        t_idx = np.argsort(times_raw)
-        l_idx = np.argsort(levels_raw)
-        lat_idx = np.argsort(lats_raw)
-        lon_idx = np.argsort(lons_raw)
-
-        times = times_raw[t_idx]
-        levels = levels_raw[l_idx]
-        lats = lats_raw[lat_idx]
-        lons = lons_raw[lon_idx]
-
-        self._lat_min = float(lats[0])
-        self._lat_max = float(lats[-1])
-        self._lon_min = float(lons[0])
-        self._lon_max = float(lons[-1])
-        self._p_min = float(levels[0])
-        self._p_max = float(levels[-1])
-        self._time_min = np.datetime64(int(times[0]), "ns")
-        self._time_max = np.datetime64(int(times[-1]), "ns")
-
-        axes = (times, levels, lats, lons)
-
-        def _sorted_values(var_name: str) -> np.ndarray:
-            """Вернуть numpy-массив переменной, переупорядоченный по всем осям."""
-            arr = ds[var_name].values.astype(np.float32)
-            # ERA5 порядок осей: (time, pressure_level, latitude, longitude)
-            return arr[np.ix_(t_idx, l_idx, lat_idx, lon_idx)]
-
-        u_data = np.nan_to_num(_sorted_values(_WIND_U_NAME), nan=0.0, posinf=0.0, neginf=0.0)
-        v_data = np.nan_to_num(_sorted_values(_WIND_V_NAME), nan=0.0, posinf=0.0, neginf=0.0)
-        w_data = np.nan_to_num(_sorted_values(_WIND_W_NAME), nan=0.0, posinf=0.0, neginf=0.0)
-        t_data = np.nan_to_num(_sorted_values(_WIND_T_NAME), nan=288.15, posinf=288.15, neginf=288.15)
+        axes = (
+            self._time_axis_float,
+            self.pressure_axis_hpa,
+            self.latitude_axis_deg,
+            self.longitude_axis_deg,
+        )
 
         kw = {"method": "linear", "bounds_error": False}
-        self._interp_u = RegularGridInterpolator(axes, u_data, fill_value=0.0, **kw)
-        self._interp_v = RegularGridInterpolator(axes, v_data, fill_value=0.0, **kw)
-        self._interp_w = RegularGridInterpolator(axes, w_data, fill_value=0.0, **kw)
-        self._interp_t = RegularGridInterpolator(axes, t_data, fill_value=288.15, **kw)
+        self._interp_u = RegularGridInterpolator(axes, self.data[0], fill_value=0.0, **kw)
+        self._interp_v = RegularGridInterpolator(axes, self.data[1], fill_value=0.0, **kw)
+        self._interp_w = RegularGridInterpolator(axes, self.data[2], fill_value=0.0, **kw)
+        self._interp_t = RegularGridInterpolator(axes, self.data[3], fill_value=288.15, **kw)
 
     @property
     def time_min(self) -> np.datetime64:
@@ -217,9 +328,63 @@ class WindInterpolator:
     # ──────────────────── Фабрика ────────────────────
 
     @classmethod
-    def from_file(cls, path: Path, origin_lat: float, origin_lon: float) -> WindInterpolator:
-        """Открыть датасет и создать интерполятор."""
-        return cls(ds=xr.open_dataset(path), origin_lat=origin_lat, origin_lon=origin_lon)
+    def from_file(
+        cls,
+        path: Path,
+        env_idx: int | None = None,
+        origin_lat: float | None = None,
+        origin_lon: float | None = None,
+    ) -> WindInterpolator:
+        """Открыть или создать кэш и затем построить интерполятор поверх него."""
+        value_path, meta_path = ensure_wind_interpolator_cache(path)
+        return cls._from_cache(
+            value_path=value_path,
+            meta_path=meta_path,
+            env_idx=env_idx,
+            origin_lat=origin_lat,
+            origin_lon=origin_lon,
+        )
+
+    @classmethod
+    def _from_cache(
+        cls,
+        *,
+        value_path: Path,
+        meta_path: Path,
+        env_idx: int | None,
+        origin_lat: float | None,
+        origin_lon: float | None,
+    ) -> WindInterpolator:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        data = np.load(value_path, mmap_mode="r")
+
+        expected_shape = tuple(int(dim) for dim in meta["grid_shape"])
+        if data.shape != (4, *expected_shape):
+            raise ValueError(
+                f"Invalid wind cache shape: got {data.shape}, expected {(4, *expected_shape)}"
+            )
+
+        origin_lat_value = (
+            float(origin_lat)
+            if origin_lat is not None
+            else float(meta["latitude_axis_deg"][0])
+        )
+        origin_lon_value = (
+            float(origin_lon)
+            if origin_lon is not None
+            else float(meta["longitude_axis_deg"][0])
+        )
+
+        return cls(
+            data=data,
+            env_idx=env_idx,
+            origin_lat=origin_lat_value,
+            origin_lon=origin_lon_value,
+            time_axis_ns=np.asarray(meta["time_axis_ns"], dtype=np.int64),
+            pressure_axis_hpa=np.asarray(meta["pressure_axis_hpa"], dtype=np.float64),
+            latitude_axis_deg=np.asarray(meta["latitude_axis_deg"], dtype=np.float64),
+            longitude_axis_deg=np.asarray(meta["longitude_axis_deg"], dtype=np.float64),
+        )
 
     # ──────────────────── Преобразование координат ────────────────────
 
@@ -227,8 +392,27 @@ class WindInterpolator:
         """Локальные метры (x, y) → (lat, lon) относительно origin."""
         m_per_lat = meters_per_deg_lat(self.origin_lat)
         m_per_lon = meters_per_deg_lon(self.origin_lat)
-        lat = np.clip(self.origin_lat + y_m / m_per_lat, self._lat_min, self._lat_max)
-        lon = np.clip(self.origin_lon + x_m / m_per_lon, self._lon_min, self._lon_max)
+        raw_lat = self.origin_lat + y_m / m_per_lat
+        raw_lon = self.origin_lon + x_m / m_per_lon
+        lat = np.clip(raw_lat, self._lat_min, self._lat_max)
+        lon = np.clip(raw_lon, self._lon_min, self._lon_max)
+
+        if not self._warned_dataset_bounds and (
+            np.any(raw_lat != lat) or np.any(raw_lon != lon)
+        ):
+            self._warned_dataset_bounds = True
+            env_label = f"env_{self.env_idx:03d}" if self.env_idx is not None else "env"
+            warnings.warn(
+                (
+                    f"[{env_label}] Позиция аэростата вышла за границы ERA5-датасета; "
+                    "координаты будут клампиться к доступному диапазону "
+                    f"lat=[{self._lat_min:.3f}, {self._lat_max:.3f}], "
+                    f"lon=[{self._lon_min:.3f}, {self._lon_max:.3f}]."
+                ),
+                RuntimeWarning,
+                stacklevel=3,
+            )
+
         return lat.astype(np.float64), lon.astype(np.float64)
 
     def _z_to_pressure(self, z_m: np.ndarray) -> np.ndarray:
@@ -274,4 +458,6 @@ class WindInterpolator:
         return np.stack([u, v, w], axis=-1)
 
     def close(self) -> None:
-        self.ds.close()
+        mmap = getattr(self.data, "_mmap", None)
+        if mmap is not None:
+            mmap.close()

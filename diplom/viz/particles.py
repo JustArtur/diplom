@@ -5,7 +5,6 @@ from __future__ import annotations
 import numpy as np
 import pyvista as pv
 
-from diplom.shared_constants import MIN_HEIGHT
 from diplom.wind.interp import WindInterpolator
 
 from .constants import (
@@ -47,7 +46,12 @@ class WindParticles:
 
     def _z_bounds(self, center_z: float) -> tuple[float, float]:
         """Допустимый диапазон высот [lo, hi] для спавна и отсечения."""
-        return max(center_z - VISIBLE_Z_RANGE, MIN_HEIGHT), center_z + VISIBLE_Z_RANGE
+        wb = self._wind_interpolator.world_bounds
+        lo = max(center_z - VISIBLE_Z_RANGE, wb.z_min)
+        hi = min(center_z + VISIBLE_Z_RANGE, wb.z_max)
+        if lo >= hi:
+            lo, hi = wb.z_min, wb.z_max
+        return lo, hi
 
     def _random_disk(self, n: int) -> tuple[np.ndarray, np.ndarray]:
         """Равномерное распределение *n* точек на диске радиуса VISIBLE_RADIUS.

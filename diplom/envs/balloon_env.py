@@ -7,8 +7,9 @@ import numpy as np
 from gymnasium import spaces
 
 from diplom.config import BalloonConfig, EnvironmentConfig, SimulationConfig
-from diplom.shared_constants import MAX_HEIGHT, MIN_HEIGHT, WORLD_SIZE
+from diplom.sim.factory import create_simulation
 from diplom.sim.simulation import SimResult, Simulation
+from diplom.world import WorldBounds, resolve_balloon_config
 from diplom.wind.interp import WindInterpolator
 
 
@@ -22,8 +23,12 @@ class BalloonEnv(gym.Env):
 
     metadata = {"render_modes": ["ansi"], "render_fps": 20}
 
-    def __init__(self, config: EnvironmentConfig, wind_interp: WindInterpolator) -> None:
-        self.base_balloon = config.balloon
+    def __init__(
+        self,
+        config: EnvironmentConfig,
+        wind_interp: WindInterpolator,
+        env_idx: int | None = None,
+    ) -> None:
         self.dt = float(config.dt)
         self.initial_air_weight = config.initial_air_weight
         self.max_episode_steps = config.max_episode_steps
@@ -35,9 +40,12 @@ class BalloonEnv(gym.Env):
         self.action_limit = np.float32(config.action_limit)
         self.target_reach_radius = np.float32(config.target_reach_radius)
         self.wind_interp = wind_interp
+        self.world_bounds: WorldBounds = wind_interp.world_bounds
+        self.env_idx = env_idx
         self.render_mode = "ansi"
         self._step_count = 0
-        self.sim = self._make_sim(self.base_balloon)
+        self.base_balloon = resolve_balloon_config(config.balloon, self.world_bounds)
+        # self.sim: Simulation | None= None
 
         # Плоский вектор наблюдений (19 float32):
         #   position(3) + target_position(3) + delta_position(3) + wind(3)
@@ -135,9 +143,10 @@ class BalloonEnv(gym.Env):
         )
 
     def _make_sim(self, balloon: BalloonConfig) -> Simulation:
-        return Simulation(
+        return create_simulation(
             SimulationConfig(balloon=balloon, initial_air_weight=self.initial_air_weight),
             self.wind_interp,
+            env_idx=self.env_idx,
         )
 
     def _episode_balloon(self) -> BalloonConfig:
@@ -172,21 +181,22 @@ class BalloonEnv(gym.Env):
         """Сэмплирует целевую позицию с учётом train_target_position_delta и
         гарантирует минимальное расстояние до стартовой точки."""
         min_distance = 3000.0
-        max_attempts = 100
 
-        candidate = self._sample_position(self.base_balloon.target_position, self.train_target_position_delta)
-        for _ in range(max_attempts):
+        while True:
+            candidate = self._sample_position(self.base_balloon.target_position, self.train_target_position_delta)
             if float(np.linalg.norm(candidate - initial_position)) >= min_distance:
                 return candidate
-            candidate = self._sample_position(self.base_balloon.target_position, self.train_target_position_delta)
 
-        # Если по каким-то причинам не удалось найти подходящую точку за разумное число попыток,
-        # возвращаем последний кандидат.
-        return candidate
 
     def _sample_position(self, center: np.ndarray, delta: np.ndarray) -> np.ndarray:
-        low = np.array([0.0, 0.0, MIN_HEIGHT], dtype=np.float32)
-        high = np.array([WORLD_SIZE, WORLD_SIZE, MAX_HEIGHT], dtype=np.float32)
+        low = np.array(
+            [self.world_bounds.x_min, self.world_bounds.y_min, self.world_bounds.z_min],
+            dtype=np.float32,
+        )
+        high = np.array(
+            [self.world_bounds.x_max, self.world_bounds.y_max, self.world_bounds.z_max],
+            dtype=np.float32,
+        )
 
         sample_low = np.maximum(center - delta, low)
         sample_high = np.minimum(center + delta, high)

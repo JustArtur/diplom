@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-WORLD_SIZE = 1_000_000
+WORLD_SIZE = 5_000_000
 MIN_HEIGHT = 60.0
 # Максимальная высота соответствует верхнему уровню ERA5 (~50 гПа ≈ 20 км).
 MAX_HEIGHT = 20000.0

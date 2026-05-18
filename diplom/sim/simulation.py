@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import warnings
 
 import numpy as np
 
@@ -13,7 +14,8 @@ from diplom.sim.constants import (
     GAS_CONSTANT,
     GRAVITY_ACCELERATION,
 )
-from diplom.shared_constants import MAX_HEIGHT, MAX_VERTICAL_SPEED, MIN_HEIGHT, WORLD_SIZE
+from diplom.shared_constants import MAX_VERTICAL_SPEED
+from diplom.world import WorldBounds
 from diplom.wind.interp import WindInterpolator, WindSample
 
 
@@ -32,8 +34,15 @@ class SimResult:
 
 
 class Simulation:
-    def __init__(self, config: SimulationConfig, wind_interp: WindInterpolator) -> None:
+    def __init__(
+        self,
+        config: SimulationConfig,
+        wind_interp: WindInterpolator,
+        env_idx: int | None = None,
+    ) -> None:
         self.wind_interp = wind_interp
+        self.world_bounds: WorldBounds = wind_interp.world_bounds
+        self.env_idx = env_idx
 
         self.sim_time = config.balloon.sim_time
         self.position = np.array(config.balloon.initial_position, dtype=np.float32)
@@ -44,6 +53,7 @@ class Simulation:
         self.vertical_acceleration = np.float32(0.0)
         self.energy_spent = np.float32(0.0)
         self.air_density = np.float32(0.0)
+        self._warned_world_bounds = False
 
     def _clamp_time(self) -> None:
         self.sim_time = np.clip(self.sim_time, self.wind_interp.time_min, self.wind_interp.time_max)
@@ -73,10 +83,35 @@ class Simulation:
         self._compute_vertical_speed(wind.pressure, wind.temperature, wind.w, dt)
         self.energy_spent += np.abs(air_mass_delta) * np.float32(ENERGY_COST_PER_KG)
 
-        self.position[0] = np.clip(self.position[0] + np.float32(wind.u) * dt, 0.0, WORLD_SIZE)
-        self.position[1] = np.clip(self.position[1] + np.float32(wind.v) * dt, 0.0, WORLD_SIZE)
-        # Ограничиваем саму высоту (не приращение) снизу и сверху допустимым диапазоном ERA5.
-        self.position[2] = np.clip(self.position[2] + self.vertical_speed * dt, MIN_HEIGHT, MAX_HEIGHT)
+        proposed_x = self.position[0] + np.float32(wind.u) * dt
+        proposed_y = self.position[1] + np.float32(wind.v) * dt
+        proposed_z = self.position[2] + self.vertical_speed * dt
+        if not self._warned_world_bounds and (
+            proposed_x < self.world_bounds.x_min
+            or proposed_x > self.world_bounds.x_max
+            or proposed_y < self.world_bounds.y_min
+            or proposed_y > self.world_bounds.y_max
+            or proposed_z < self.world_bounds.z_min
+            or proposed_z > self.world_bounds.z_max
+        ):
+            self._warned_world_bounds = True
+            env_label = f"env_{self.env_idx:03d}" if self.env_idx is not None else "env"
+            warnings.warn(
+                (
+                    f"[{env_label}] Аэростат вышел за границы симуляционного мира; "
+                    f"координаты будут клампиться к диапазону "
+                    f"[{self.world_bounds.x_min:.0f}, {self.world_bounds.x_max:.0f}] м по X "
+                    f"и [{self.world_bounds.y_min:.0f}, {self.world_bounds.y_max:.0f}] м по Y "
+                    f"и [{self.world_bounds.z_min:.0f}, {self.world_bounds.z_max:.0f}] м по Z."
+                ),
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+        self.position[0] = np.clip(proposed_x, self.world_bounds.x_min, self.world_bounds.x_max)
+        self.position[1] = np.clip(proposed_y, self.world_bounds.y_min, self.world_bounds.y_max)
+        # Ограничиваем саму высоту (не приращение) снизу и сверху границами вертикали датасета (ISA).
+        self.position[2] = np.clip(proposed_z, self.world_bounds.z_min, self.world_bounds.z_max)
         # Ограничиваем вертикальную скорость, чтобы предотвратить численный взрыв при сильном дисбалансе сил.
         self.vertical_speed = np.clip(self.vertical_speed, -MAX_VERTICAL_SPEED, MAX_VERTICAL_SPEED)
 

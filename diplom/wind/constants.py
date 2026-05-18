@@ -5,5 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 DEFAULT_WIND_DATA_PATH = Path("data/era5_sample.nc")
-DEFAULT_ORIGIN_LAT = 54.5
-DEFAULT_ORIGIN_LON = 57.0
+
+# Опорная точка для локальной системы координат: юго-западный угол области запроса.
+DEFAULT_ORIGIN_LAT = 30.0
+DEFAULT_ORIGIN_LON = 28.0

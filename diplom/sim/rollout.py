@@ -8,6 +8,7 @@ from stable_baselines3 import PPO
 
 from diplom.config import AppConfig
 from diplom.envs.factory import build_env
+from diplom.world import log_world_bounds
 
 
 @dataclass
@@ -27,7 +28,14 @@ def rollout_episodes(
     seed: int = 0,
 ) -> List[EpisodeResult]:
     env_config = replace(config.environment, randomize_start_state=False)
-    env = build_env(env_config, config.wind)
+    env = build_env(env_config, config.wind, env_idx=0)
+    log_world_bounds(
+        env.world_bounds,
+        origin_lat=env.wind_interp.origin_lat,
+        origin_lon=env.wind_interp.origin_lon,
+        wind_path=config.wind.path,
+        prefix="[rollout]",
+    )
     model = PPO.load(policy_path) if policy_path is not None else None
     results: List[EpisodeResult] = []
 

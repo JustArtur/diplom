@@ -17,7 +17,8 @@ from typing import List, Optional
 import numpy as np
 import plotly.graph_objects as go
 
-from diplom.shared_constants import MAX_HEIGHT, WORLD_SIZE
+from diplom.shared_constants import MAX_HEIGHT
+from diplom.world import WorldBounds
 
 # Цветовая палитра траекторий разных сред.
 _TRAJ_PALETTE: List[str] = [
@@ -56,8 +57,16 @@ class TrajectoryBounds:
     zmax: float
 
     @property
+    def x_span(self) -> float:
+        return self.xmax - self.xmin
+
+    @property
+    def y_span(self) -> float:
+        return self.ymax - self.ymin
+
+    @property
     def xy_span(self) -> float:
-        return max(self.xmax - self.xmin, self.ymax - self.ymin)
+        return max(self.x_span, self.y_span)
 
     @property
     def z_span(self) -> float:
@@ -78,6 +87,7 @@ def compute_trajectory_bounds(
     margin: float = 0.25,
     min_xy_span: float = 1000.0,
     min_z_span: float = 200.0,
+    world_bounds: Optional[WorldBounds] = None,
 ) -> TrajectoryBounds:
     """Вычислить границы bbox по всем позициям траекторий + целевым точкам.
 
@@ -87,6 +97,7 @@ def compute_trajectory_bounds(
         margin: относительный отступ от краёв bbox (0.25 = 25% от span).
         min_xy_span: минимальный размах по XY (м), чтобы не схлопываться в точку.
         min_z_span: минимальный размах по Z (м).
+        world_bounds: реальные границы мира, если график нужно синхронизировать по датасету.
     """
     all_pos: List[List[float]] = []
 
@@ -104,40 +115,54 @@ def compute_trajectory_bounds(
                 all_pos.append(tp)
 
     if not all_pos:
+        if world_bounds is not None:
+            return TrajectoryBounds(
+                xmin=world_bounds.x_min,
+                xmax=world_bounds.x_max,
+                ymin=world_bounds.y_min,
+                ymax=world_bounds.y_max,
+                zmin=world_bounds.z_min,
+                zmax=world_bounds.z_max,
+            )
         return TrajectoryBounds(
-            xmin=0, xmax=WORLD_SIZE,
-            ymin=0, ymax=WORLD_SIZE,
-            zmin=0, zmax=MAX_HEIGHT,
+            xmin=0.0, xmax=1.0,
+            ymin=0.0, ymax=1.0,
+            zmin=0.0, zmax=MAX_HEIGHT,
         )
 
     pos = np.array(all_pos, dtype=np.float32)
-    xmin, ymin, zmin = pos.min(axis=0)
-    xmax, ymax, zmax = pos.max(axis=0)
+    xmin_raw, ymin_raw, zmin = pos.min(axis=0)
+    xmax_raw, ymax_raw, zmax = pos.max(axis=0)
 
-    # Применяем минимальный размах
-    cx, cy, cz = (xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2
-    xy_half = max((xmax - xmin) / 2, (ymax - ymin) / 2, min_xy_span / 2)
+    if world_bounds is not None:
+        xmin = world_bounds.x_min
+        xmax = world_bounds.x_max
+        ymin = world_bounds.y_min
+        ymax = world_bounds.y_max
+        zmin = world_bounds.z_min
+        zmax = world_bounds.z_max
+        return TrajectoryBounds(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, zmin=zmin, zmax=zmax)
+
+    # Применяем минимальный размах по каждой оси отдельно.
+    cx = (xmin_raw + xmax_raw) / 2
+    cy = (ymin_raw + ymax_raw) / 2
+    x_half = max((xmax_raw - xmin_raw) / 2, min_xy_span / 2)
+    y_half = max((ymax_raw - ymin_raw) / 2, min_xy_span / 2)
+    xmin, xmax = cx - x_half, cx + x_half
+    ymin, ymax = cy - y_half, cy + y_half
+
+    xmin -= x_half * margin
+    xmax += x_half * margin
+    ymin -= y_half * margin
+    ymax += y_half * margin
+
+    cz = (zmin + zmax) / 2
     z_half = max((zmax - zmin) / 2, min_z_span / 2)
+    zmin = max(0.0, cz - z_half)
+    zmax = cz + z_half
 
-    xmin, xmax = cx - xy_half, cx + xy_half
-    ymin, ymax = cy - xy_half, cy + xy_half
-    zmin, zmax = max(0.0, cz - z_half), cz + z_half
-
-    # Добавляем отступ
-    xmin -= xy_half * margin
-    xmax += xy_half * margin
-    ymin -= xy_half * margin
-    ymax += xy_half * margin
     zmin = max(0.0, zmin - z_half * margin)
-    zmax += z_half * margin
-
-    # Зажимаем в допустимые пределы мира
-    xmin = max(0.0, xmin)
-    xmax = min(WORLD_SIZE, xmax)
-    ymin = max(0.0, ymin)
-    ymax = min(WORLD_SIZE, ymax)
-    zmin = max(0.0, zmin)
-    zmax = min(MAX_HEIGHT, zmax)
+    zmax = min(MAX_HEIGHT, zmax + z_half * margin)
 
     return TrajectoryBounds(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax,
                             zmin=zmin, zmax=zmax)
@@ -148,6 +173,7 @@ def build_figure(
     title: str = "Траектория полёта аэростата",
     bounds: Optional[TrajectoryBounds] = None,
     extra_steps: Optional[List[dict]] = None,
+    world_bounds: Optional[WorldBounds] = None,
 ) -> go.Figure:
     """Построить интерактивный 3D-график траекторий.
 
@@ -156,9 +182,10 @@ def build_figure(
         title: заголовок.
         bounds: bbox для масштаба осей; вычисляется автоматически если None.
         extra_steps: шаги текущего незавершённого эпизода (для bounds).
+        world_bounds: реальные границы мира, если график нужно синхронизировать по датасету.
     """
     if bounds is None:
-        bounds = compute_trajectory_bounds(episodes, extra_steps)
+        bounds = compute_trajectory_bounds(episodes, extra_steps, world_bounds=world_bounds)
 
     fig = go.Figure()
 
@@ -274,44 +301,39 @@ def apply_figure_layout(
 ) -> None:
     """Применить layout с осями и камерой.
 
-    Если bounds передан — используем его для вертикального масштаба, но по X/Y
-    всегда показываем весь мир (0..WORLD_SIZE), чтобы ни одна траектория и цель
-    не оказывалась «за кадром».
+    Если bounds передан — используем его для всех осей. Для X/Y это означает
+    реальные границы мира, для Z — границы данных траекторий.
     """
 
     if bounds is not None:
-        # По горизонтали всегда показываем весь мир — так гарантированно видны
-        # любые траектории и цели, даже если они далеко от текущего bbox.
-        x_range = [0.0, WORLD_SIZE]
-        y_range = [0.0, WORLD_SIZE]
-        # Z: всегда весь допустимый диапазон высот, чтобы цели на больших
-        # высотах (например, 10–20 км) не обрезались.
-        z_range = [0.0, MAX_HEIGHT]
+        x_range = [bounds.xmin, bounds.xmax]
+        y_range = [bounds.ymin, bounds.ymax]
+        z_range = [bounds.zmin, bounds.zmax]
 
-        # Соотношение сторон: x=y (квадратные горизонтальные оси), z пропорционально
-        xy_span = float(WORLD_SIZE)
-        z_span = z_range[1] - z_range[0]
-        # Вертикальный масштаб: минимум 0.4 от горизонтального, максимум 1.0
-        z_ratio = float(np.clip(z_span / xy_span, 0.4, 1.0))
+        horizontal_span = max(bounds.x_span, bounds.y_span, 1.0)
+        z_ratio = float(np.clip(max(bounds.z_span, 1.0) / horizontal_span, 0.4, 1.0))
 
         def _ticks(lo: float, hi: float, n: int = 6) -> tuple[list, list]:
             vals = np.linspace(lo, hi, n).tolist()
-            labels = [f"{v:.0f}" for v in vals]
+            labels = [f"{v/1000:.0f} km" if abs(hi - lo) >= 10_000 else f"{v:.0f}" for v in vals]
             return vals, labels
 
         x_ticks, x_labels = _ticks(*x_range)
         y_ticks, y_labels = _ticks(*y_range)
         z_ticks, z_labels = _ticks(*z_range)
     else:
-        x_range = [0, WORLD_SIZE]
-        y_range = [0, WORLD_SIZE]
-        z_range = [0, MAX_HEIGHT]
+        x_range = [0.0, 1.0]
+        y_range = [0.0, 1.0]
+        z_range = [0.0, MAX_HEIGHT]
         z_ratio = 0.3
-        x_ticks = np.linspace(0, WORLD_SIZE, 6).tolist()
-        x_labels = [f"{v/1000:.0f} km" for v in x_ticks]
+        x_ticks = np.linspace(0.0, 1.0, 6).tolist()
+        x_labels = [f"{v:.0f}" for v in x_ticks]
         y_ticks, y_labels = x_ticks, x_labels
         z_ticks = np.linspace(0, MAX_HEIGHT, 6).tolist()
         z_labels = [f"{v:.0f}" for v in z_ticks]
+
+    x_span = max(bounds.x_span, 1.0) if bounds is not None else 1.0
+    y_span = max(bounds.y_span, 1.0) if bounds is not None else 1.0
 
     fig.update_layout(
         title=dict(text=title, x=0.5, font=dict(size=15)),
@@ -329,7 +351,11 @@ def apply_figure_layout(
                 tickvals=z_ticks, ticktext=z_labels,
             ),
             aspectmode="manual",
-            aspectratio=dict(x=1.0, y=1.0, z=z_ratio),
+            aspectratio=dict(
+                x=x_span / max(x_span, y_span),
+                y=y_span / max(x_span, y_span),
+                z=z_ratio,
+            ),
             bgcolor="rgba(10,10,30,1)",
         ),
         legend=dict(groupclick="toggleitem", bgcolor="rgba(30,30,30,0.8)"),

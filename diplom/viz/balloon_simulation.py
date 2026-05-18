@@ -6,7 +6,6 @@ from functools import partial
 import numpy as np
 import pyvista as pv
 
-from diplom.shared_constants import WORLD_SIZE
 from diplom.wind.interp import WindInterpolator
 
 from .constants import (
@@ -80,10 +79,11 @@ class BalloonSimulation:
 
     def _build_terrain(self) -> None:
         """Зелёная поверхность земли с лёгким синтетическим рельефом."""
+        world_bounds = self.sim.world_bounds
         plane = pv.Plane(
-            center=(0, 0, 0),
-            i_size=WORLD_SIZE,
-            j_size=WORLD_SIZE,
+            center=(world_bounds.center[0], world_bounds.center[1], 0.0),
+            i_size=world_bounds.width,
+            j_size=world_bounds.height,
             i_resolution=TERRAIN_RESOLUTION,
             j_resolution=TERRAIN_RESOLUTION,
         )
