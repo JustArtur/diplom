@@ -49,6 +49,12 @@ class Simulation:
         self.target_position = np.array(config.balloon.target_position, dtype=np.float32)
         self.air_weight = np.float32(config.initial_air_weight)
 
+        env_label = f"env_idx={self.env_idx}" if self.env_idx is not None else "env_idx=—"
+        print(  # noqa: T201 — явный вывод конфигурации эпизода в CLI/лог
+            f"[Simulation] {env_label}: старт (x, y, z) м={self.position.tolist()}, "
+            f"цель (x, y, z) м={self.target_position.tolist()}"
+        )
+
         self.vertical_speed = np.float32(0.0)
         self.vertical_acceleration = np.float32(0.0)
         self.energy_spent = np.float32(0.0)

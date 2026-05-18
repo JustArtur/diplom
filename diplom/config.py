@@ -157,6 +157,8 @@ class TrainingConfig:
     # Количество параллельных сред. M1 Pro имеет 10 ядер (8P+2E),
     # больше 8 даёт только IPC-overhead без прироста скорости.
     n_envs: int = 8
+    # Устройство для нейросети PPO: cpu | cuda | mps (см. diplom.torch_device.resolve_torch_device).
+    device: str = "cpu"
 
 
 @dataclass(frozen=True, slots=True)

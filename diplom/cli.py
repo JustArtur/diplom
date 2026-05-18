@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -42,6 +42,7 @@ def _build_app_config(
     seed: int = DEFAULT_TRAINING_CONFIG.seed,
     logdir: Path = DEFAULT_TRAINING_CONFIG.logdir,
     n_envs: int = DEFAULT_TRAINING_CONFIG.n_envs,
+    device: str = DEFAULT_TRAINING_CONFIG.device,
     target_reach_radius: float = DEFAULT_ENVIRONMENT_CONFIG.target_reach_radius,
     start_time: datetime = datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
 ) -> AppConfig:
@@ -55,6 +56,7 @@ def _build_app_config(
             seed=seed,
             logdir=logdir,
             n_envs=n_envs,
+            device=device,
         ),
         visualization=VisualizationConfig(
             window_size=DEFAULT_VISUALIZATION_CONFIG.window_size,
@@ -142,6 +144,12 @@ def train_ppo(
         help="Каталог для артефактов обучения",
     ),
     n_envs: int = typer.Option(DEFAULT_TRAINING_CONFIG.n_envs, "--envs", "-e", help="Количество параллельных сред"),
+    device: str = typer.Option(
+        DEFAULT_TRAINING_CONFIG.device,
+        "--device", "-d",
+        help="Устройство для нейросети PPO: cpu, cuda или mps",
+        case_sensitive=False,
+    ),
     target_reach_radius: float = typer.Option(
         DEFAULT_ENVIRONMENT_CONFIG.target_reach_radius,
         "--target-radius",
@@ -161,10 +169,15 @@ def train_ppo(
         seed=seed,
         logdir=logdir,
         n_envs=n_envs,
+        device=device,
         target_reach_radius=target_reach_radius,
         start_time=start_time,
     )
-    run_train_ppo(app_config)
+    try:
+        run_train_ppo(app_config)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
 
 # ──────────────────── rollout ────────────────────
 
@@ -205,6 +218,12 @@ def rollout(
         datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
         help="Базовое время симуляции",
     ),
+    device: str = typer.Option(
+        DEFAULT_TRAINING_CONFIG.device,
+        "--device", "-d",
+        help="Устройство для загрузки PPO: cpu, cuda или mps",
+        case_sensitive=False,
+    ),
 ) -> None:
     """Запустить rollout обученной модели и собрать траектории эпизодов."""
     from diplom.sim.rollout import rollout_episodes
@@ -214,14 +233,19 @@ def rollout(
             balloon=BalloonConfig(sim_time=np.datetime64(start_time)),
             target_reach_radius=target_reach_radius,
         ),
+        training=replace(DEFAULT_TRAINING_CONFIG, device=device),
     )
-    results = rollout_episodes(
-        app_config,
-        n_episodes=episodes,
-        policy_path=str(model_path),
-        render=render,
-        seed=seed,
-    )
+    try:
+        results = rollout_episodes(
+            app_config,
+            n_episodes=episodes,
+            policy_path=str(model_path),
+            render=render,
+            seed=seed,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
 
     serialized_results = [asdict(result) for result in results]
     summary = {
@@ -315,10 +339,10 @@ def wind_viz(
         1, "--stride-lat",
         help="Прореживание по широте",
     ),
-    stride_level: float = typer.Option(
-        5000.0,
-        "--stride-level",
-        help="Шаг по давлению между конусами, Па (ветер интерполируется; например 500 ≈ 5 гПа, 5000 ≈ 50 гПа)",
+    stride_altitude_m: float = typer.Option(
+        500.0,
+        "--stride-altitude-m",
+        help="Шаг по высоте между конусами, м (ветер интерполируется по вертикали)",
     ),
     w_scale: float = typer.Option(
         0.0, "--w-scale",
@@ -346,7 +370,7 @@ def wind_viz(
 
     \b
       # График на конкретное время с прореживанием
-      diplom wind-viz --time 2024-07-01T12:00:00 --stride-lat 2 --stride-lon 2 --stride-level 3000
+      diplom wind-viz --time 2024-07-01T12:00:00 --stride-lat 2 --stride-lon 2 --stride-altitude-m 1000
     """
     from diplom.viz.wind_plot import (
         build_wind_figure,
@@ -411,7 +435,7 @@ def wind_viz(
         wind_slice,
         stride_lon=stride_lon,
         stride_lat=stride_lat,
-        stride_level=stride_level,
+        stride_altitude_m=stride_altitude_m,
         w_scale=w_scale,
     )
 

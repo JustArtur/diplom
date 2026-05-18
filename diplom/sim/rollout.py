@@ -8,6 +8,7 @@ from stable_baselines3 import PPO
 
 from diplom.config import AppConfig
 from diplom.envs.factory import build_env
+from diplom.torch_device import resolve_torch_device
 from diplom.world import log_world_bounds
 
 
@@ -36,7 +37,12 @@ def rollout_episodes(
         wind_path=config.wind.path,
         prefix="[rollout]",
     )
-    model = PPO.load(policy_path) if policy_path is not None else None
+    device = resolve_torch_device(config.training.device)
+    model = (
+        PPO.load(policy_path, device=device)
+        if policy_path is not None
+        else None
+    )
     results: List[EpisodeResult] = []
 
     try:

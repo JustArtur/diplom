@@ -13,6 +13,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from diplom.config import AppConfig, EnvironmentConfig, WindConfig
 from diplom.envs.balloon_env import BalloonEnv
 from diplom.envs.factory import build_env
+from diplom.torch_device import resolve_torch_device
 from diplom.train.info_logging_callback import InfoLoggingCallback
 from diplom.world import log_world_bounds
 from diplom.wind.factory import build_wind_interpolator
@@ -58,16 +59,6 @@ def _make_vec_env(config: AppConfig) -> Union[DummyVecEnv, SubprocVecEnv]:
     )
 
 
-def _select_device() -> str:
-    """Выбрать устройство для обучения PPO.
-
-    Для MLP-политик Stable-Baselines3 обычно быстрее и стабильнее работает на CPU,
-    чем на GPU/MPS, поэтому по умолчанию используем CPU.
-    """
-    return "cpu"
-
-
-
 def _next_run_dir(trajectories_root: Path) -> Path:
     """Вернуть следующую по счёту директорию ppo_NNN внутри trajectories_root.
 
@@ -89,7 +80,7 @@ def train_ppo(config: AppConfig, callbacks: Sequence[BaseCallback] | None = None
 
     logdir = config.training.logdir
     logdir.mkdir(parents=True, exist_ok=True)
-    device = _select_device()
+    device = resolve_torch_device(config.training.device)
     print(f"[train_ppo] Using device={device}")  # noqa: T201
 
     vec_env = _make_vec_env(config)
