@@ -162,7 +162,7 @@ class TrainingConfig:
     # Устройство для нейросети PPO: cpu | cuda | mps (см. diplom.torch_device.resolve_torch_device).
     device: str = "cpu"
     # Уровень логирования PPO в консоль (как verbose в Stable-Baselines3): 0 — тихо, 1 — таблица метрик.
-    verbose: int = 0
+    verbose: int = 1
 
 
 @dataclass(frozen=True, slots=True)

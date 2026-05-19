@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
@@ -78,7 +77,6 @@ def train_ppo(
     print(f"[train_ppo] Using device={device}")  # noqa: T201
 
     vec_env = _make_vec_env(config, force_dummy=force_dummy_vec_env)
-    eval_env = None
     info_callback = InfoLoggingCallback()
 
     probe_interp = build_wind_interpolator(config.wind)
@@ -152,23 +150,7 @@ def train_ppo(
             raise
         else:
             _save_model()
-
-        # Простой контрольный прогон на отдельной среде после обучения.
-        # Здесь отключаем рандомизацию, чтобы получить детерминированную оценку.
-        eval_env = build_env(env_config=config.environment, wind_config=config.wind, env_idx=0)
-        obs, _ = eval_env.reset(seed=config.training.seed + 1)
-        done = False
-        truncated = False
-        ep_reward = 0.0
-        while not (done or truncated):
-            action, _ = model.predict(obs, deterministic=True)
-            obs, reward, done, truncated, _info = eval_env.step(action)
-            ep_reward += float(reward)
-
-        (logdir / "eval.json").write_text(json.dumps({"episode_reward": ep_reward}, indent=2, ensure_ascii=False))
     finally:
-        if eval_env is not None:
-            eval_env.close()
         vec_env.close()
 
     return run_dir

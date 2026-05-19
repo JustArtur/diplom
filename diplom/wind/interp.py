@@ -21,6 +21,7 @@ from scipy.interpolate import RegularGridInterpolator
 
 from diplom.geo import altitude_to_pressure_hpa, altitude_to_pressure_hpa_scalar, meters_per_deg_lat, meters_per_deg_lon
 from diplom.world import WorldBounds, world_bounds_from_axes
+from diplom.wind.trilinear import RegularGrid4DSampler
 
 
 # ──────────────────── Конвертация вертикальной скорости ────────────────────
@@ -271,8 +272,9 @@ class WindInterpolator:
     longitude_axis_deg: np.ndarray
     world_bounds: WorldBounds = field(init=False, repr=False)
 
-    # Один vector-valued интерполятор (u, v, w, t) — строится в __post_init__
+    # scipy — для совместимости; hot path использует _grid_sampler
     _interp: RegularGridInterpolator = field(init=False, repr=False)
+    _grid_sampler: RegularGrid4DSampler = field(init=False, repr=False)
     _time_axis_float: np.ndarray = field(init=False, repr=False)
     _m_per_lat: float = field(init=False, repr=False)
     _m_per_lon: float = field(init=False, repr=False)
@@ -335,6 +337,13 @@ class WindInterpolator:
             method="linear",
             bounds_error=False,
             fill_value=fill_value,
+        )
+        self._grid_sampler = RegularGrid4DSampler(
+            values=values,
+            time_axis=self._time_axis_float,
+            pressure_axis=self.pressure_axis_hpa,
+            lat_axis=self.latitude_axis_deg,
+            lon_axis=self.longitude_axis_deg,
         )
 
         self._m_per_lat = meters_per_deg_lat(self.origin_lat)
@@ -479,14 +488,12 @@ class WindInterpolator:
     def _z_to_pressure(self, z_m: np.ndarray) -> np.ndarray:
         """Высота (м) → давление (гПа) с кламп к диапазону датасета."""
         p = altitude_to_pressure_hpa(z_m).astype(np.float64)
-        return np.clip(p, min(self._p_min, self._p_max), max(self._p_min, self._p_max))
+        return np.clip(p, self._p_clip_min, self._p_clip_max)
 
     def _time_to_float(self, time: np.ndarray) -> np.ndarray:
         """datetime64 → float64 (наносекунды) с кламп к диапазону датасета."""
         t_ns = np.asarray(time, dtype="datetime64[ns]").astype(np.float64)
-        t_min = float(self._time_min.astype("datetime64[ns]").astype(np.float64))
-        t_max = float(self._time_max.astype("datetime64[ns]").astype(np.float64))
-        return np.clip(t_ns, t_min, t_max)
+        return np.clip(t_ns, self._time_min_float, self._time_max_float)
 
     # ──────────────────── Публичный API ────────────────────
 
@@ -496,12 +503,7 @@ class WindInterpolator:
         level = self._z_to_pressure_scalar(z)
         t = self._time_to_float_scalar(time)
 
-        pt = self._pt_buf
-        pt[0, 0] = t
-        pt[0, 1] = level
-        pt[0, 2] = lat
-        pt[0, 3] = lon
-        u, v, w_omega, temp = self._interp(pt)[0]
+        u, v, w_omega, temp = self._grid_sampler.sample(t, level, lat, lon)
         w = omega_to_w_mps_scalar(float(w_omega), level, float(temp))
         return WindSample(u=float(u), v=float(v), w=w, temperature=float(temp), pressure=level)
 

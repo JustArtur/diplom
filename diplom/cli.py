@@ -245,6 +245,12 @@ def profile_ppo_mem(
         help="Устройство PPO: cpu, cuda, mps",
         case_sensitive=False,
     ),
+    verbose: int = typer.Option(
+        DEFAULT_TRAINING_CONFIG.verbose,
+        "--verbose",
+        "-v",
+        help="Логирование PPO в консоль (SB3): 0 — тихо, 1 — таблица метрик",
+    ),
     target_reach_radius: float = typer.Option(
         DEFAULT_ENVIRONMENT_CONFIG.target_reach_radius,
         "--target-radius",
@@ -274,6 +280,7 @@ def profile_ppo_mem(
         logdir=logdir,
         n_envs=PROFILE_N_ENVS,
         device=device,
+        verbose=verbose,
         target_reach_radius=target_reach_radius,
         start_time=start_time,
     )
@@ -325,6 +332,12 @@ def profile_ppo_cpu(
         "-d",
         case_sensitive=False,
     ),
+    verbose: int = typer.Option(
+        DEFAULT_TRAINING_CONFIG.verbose,
+        "--verbose",
+        "-v",
+        help="Логирование PPO в консоль (SB3): 0 — тихо, 1 — таблица метрик",
+    ),
     target_reach_radius: float = typer.Option(
         DEFAULT_ENVIRONMENT_CONFIG.target_reach_radius,
         "--target-radius",
@@ -349,6 +362,7 @@ def profile_ppo_cpu(
         logdir=logdir,
         n_envs=PROFILE_N_ENVS,
         device=device,
+        verbose=verbose,
         target_reach_radius=target_reach_radius,
         start_time=start_time,
     )

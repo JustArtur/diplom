@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import pickle
 import queue
 import traceback
 from dataclasses import dataclass
 from multiprocessing import Queue
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -18,9 +19,12 @@ from diplom.viz.trajectory_plot import (
     compute_trajectory_bounds,
     save_figure,
 )
+from diplom.train.trajectory_steps_io import EpisodeFileRef, load_steps_jsonl
 
 
 STOP_SENTINEL = "__STOP__"
+SNAPSHOTS_SUBDIR = "_snapshots"
+SNAPSHOT_FILENAME = "snapshot_{num_timesteps:012d}.pkl"
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,9 +32,35 @@ class TrajectoryRenderRequest:
     num_timesteps: int
     n_envs: int
     episode_counts: dict[int, int]
-    history: dict[int, list[dict[str, Any]]]
-    current_steps: dict[int, list[dict[str, Any]]]
+    history: dict[int, list[EpisodeFileRef]]
+    current_steps_paths: dict[int, Path]
+    current_step_counts: dict[int, int]
     world_bounds: WorldBounds | None = None
+
+
+def snapshots_dir(output_dir: Path) -> Path:
+    return Path(output_dir) / SNAPSHOTS_SUBDIR
+
+
+def snapshot_path_for(output_dir: Path, num_timesteps: int) -> Path:
+    return snapshots_dir(output_dir) / SNAPSHOT_FILENAME.format(num_timesteps=num_timesteps)
+
+
+def write_trajectory_snapshot(snapshot_path: Path, request: TrajectoryRenderRequest) -> None:
+    """Записать лёгкий снапшот (пути к JSONL + метаданные) на диск."""
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = snapshot_path.with_suffix(".tmp")
+    with tmp_path.open("wb") as handle:
+        pickle.dump(request, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    tmp_path.replace(snapshot_path)
+
+
+def load_trajectory_snapshot(snapshot_path: Path) -> TrajectoryRenderRequest:
+    with snapshot_path.open("rb") as handle:
+        request = pickle.load(handle)
+    if not isinstance(request, TrajectoryRenderRequest):
+        raise TypeError(f"Expected TrajectoryRenderRequest, got {type(request)!r}")
+    return request
 
 
 def start_trajectory_render_worker(
@@ -58,7 +88,8 @@ def stop_trajectory_render_worker(task_queue: Queue | None, process: Any | None)
         task_queue.put_nowait(STOP_SENTINEL)
     except queue.Full:
         try:
-            task_queue.get_nowait()
+            dropped = task_queue.get_nowait()
+            _discard_queued_snapshot(dropped)
         except queue.Empty:
             pass
         try:
@@ -72,31 +103,40 @@ def stop_trajectory_render_worker(task_queue: Queue | None, process: Any | None)
         process.join(timeout=5.0)
 
 
-def submit_trajectory_render(task_queue: Queue | None, request: TrajectoryRenderRequest) -> None:
-    """Передать последний снапшот траекторий в очередь рендера."""
+def submit_trajectory_render(task_queue: Queue | None, snapshot_path: Path) -> None:
+    """Передать путь к файлу снапшота в очередь рендера."""
     if task_queue is None:
         return
 
-    payload = {
-        "num_timesteps": request.num_timesteps,
-        "n_envs": request.n_envs,
-        "episode_counts": request.episode_counts,
-        "history": request.history,
-        "current_steps": request.current_steps,
-        "world_bounds": request.world_bounds,
-    }
-
+    path_str = str(snapshot_path.resolve())
     try:
-        task_queue.put_nowait(payload)
+        task_queue.put_nowait(path_str)
     except queue.Full:
         try:
-            task_queue.get_nowait()
+            dropped = task_queue.get_nowait()
+            _discard_queued_snapshot(dropped)
         except queue.Empty:
             pass
         try:
-            task_queue.put_nowait(payload)
+            task_queue.put_nowait(path_str)
         except queue.Full:
-            pass
+            snapshot_path.unlink(missing_ok=True)
+
+
+def cleanup_snapshots_dir(output_dir: Path) -> None:
+    """Удалить каталог временных снапшотов после остановки воркера."""
+    snapshots_root = snapshots_dir(output_dir)
+    if not snapshots_root.is_dir():
+        return
+    for path in snapshots_root.iterdir():
+        path.unlink(missing_ok=True)
+    snapshots_root.rmdir()
+
+
+def _discard_queued_snapshot(task: Any) -> None:
+    if task == STOP_SENTINEL:
+        return
+    Path(str(task)).unlink(missing_ok=True)
 
 
 def _render_worker_main(task_queue: Queue, output_dir: Path) -> None:
@@ -109,38 +149,24 @@ def _render_worker_main(task_queue: Queue, output_dir: Path) -> None:
             if task == STOP_SENTINEL:
                 break
 
+            snapshot_path = Path(str(task))
             try:
-                request = _decode_request(task)
+                request = load_trajectory_snapshot(snapshot_path)
                 _render_snapshot(request, output_dir)
             except Exception:  # noqa: BLE001
                 traceback.print_exc()
+            finally:
+                snapshot_path.unlink(missing_ok=True)
     except Exception:  # noqa: BLE001
         traceback.print_exc()
 
 
-def _decode_request(task: Mapping[str, Any]) -> TrajectoryRenderRequest:
-    return TrajectoryRenderRequest(
-        num_timesteps=int(task["num_timesteps"]),
-        n_envs=int(task["n_envs"]),
-        episode_counts={int(k): int(v) for k, v in task["episode_counts"].items()},
-        history={
-            int(env_idx): [dict(step) for step in episodes]
-            for env_idx, episodes in task["history"].items()
-        },
-        current_steps={
-            int(env_idx): [dict(step) for step in steps]
-            for env_idx, steps in task["current_steps"].items()
-        },
-        world_bounds=task.get("world_bounds"),
-    )
-
-
-def _episode_from_payload(env_idx: int, episode: Mapping[str, Any]) -> EpisodeVizData:
+def _episode_from_file_ref(ref: EpisodeFileRef) -> EpisodeVizData:
     return EpisodeVizData(
-        env_idx=env_idx,
-        steps=[dict(step) for step in episode["steps"]],
-        target_position=np.asarray(episode["target_position"], dtype=np.float32),
-        label=str(episode.get("label", "")),
+        env_idx=ref.env_idx,
+        steps=load_steps_jsonl(ref.steps_path),
+        target_position=np.asarray(ref.target_position, dtype=np.float32),
+        label=ref.label,
     )
 
 
@@ -151,11 +177,11 @@ def _render_snapshot(
     """Построить и сохранить HTML для снимка траекторий."""
     history: dict[int, list[EpisodeVizData]] = {}
     for env_idx, episodes in request.history.items():
-        history[env_idx] = [_episode_from_payload(env_idx, episode) for episode in episodes]
+        history[env_idx] = [_episode_from_file_ref(episode) for episode in episodes]
 
     current_steps: dict[int, list[dict[str, Any]]] = {
-        env_idx: [dict(step) for step in steps]
-        for env_idx, steps in request.current_steps.items()
+        env_idx: load_steps_jsonl(steps_path)
+        for env_idx, steps_path in request.current_steps_paths.items()
     }
 
     all_episodes = [ep for env_hist in history.values() for ep in env_hist]
@@ -168,10 +194,12 @@ def _render_snapshot(
         if not history_items and not current_env_steps:
             continue
 
+        live_step_count = request.current_step_counts.get(env_idx, len(current_env_steps))
         fig = _build_figure_for_env(
             env_idx=env_idx,
             history=history_items,
             current_steps=current_env_steps,
+            live_step_count=live_step_count,
             bounds=bounds,
             num_timesteps=request.num_timesteps,
             episode_count=request.episode_counts.get(env_idx, 0),
@@ -184,6 +212,7 @@ def _build_figure_for_env(
     env_idx: int,
     history: list[EpisodeVizData],
     current_steps: list[dict[str, Any]],
+    live_step_count: int,
     bounds: TrajectoryBounds,
     num_timesteps: int,
     episode_count: int,
@@ -204,7 +233,7 @@ def _build_figure_for_env(
             env_idx=env_idx,
             steps=current_steps,
             target_position=live_target,
-            label=f"сейчас ({len(current_steps)} шагов)",
+            label=f"сейчас ({live_step_count} шагов)",
         )
         for trace in build_episode_traces(live_ep):
             fig.add_trace(trace)

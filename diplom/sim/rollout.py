@@ -59,19 +59,20 @@ def rollout_episodes(
                 else:
                     action = env.action_space.sample()
 
-                obs, reward, done, truncated, info = env.step(action)
+                obs, reward, done, truncated, _info = env.step(action)
+                record = env.consume_step_record()
                 total_reward += float(reward)
                 traj.append(
                     {
-                        "action": float(info["action"]),
-                        "distance_to_target": float(info["distance_to_target"]),
+                        "action": float(record["action"]),
+                        "distance_to_target": float(record["distance_to_target"]),
                         "reward": float(reward),
                         "terminated": bool(done),
                         "truncated": bool(truncated),
-                        "position": np.array(info["position"], dtype=np.float32).tolist(),
-                        "wind": np.array(info["wind"], dtype=np.float32).tolist(),
-                        "sim_time": str(info["sim_time"]),
-                        "target_position": np.array(info["target_position"], dtype=np.float32).tolist(),
+                        "position": list(record["position"]),
+                        "wind": list(record["wind"]),
+                        "sim_time": str(record["sim_time"]),
+                        "target_position": list(record["target_position"]),
                     }
                 )
 

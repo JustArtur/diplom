@@ -44,8 +44,8 @@ class BalloonEnv(gym.Env):
         self.env_idx = env_idx
         self.render_mode = "ansi"
         self._step_count = 0
+        self._pending_step: dict[str, Any] | None = None
         self.base_balloon = resolve_balloon_config(config.balloon, self.world_bounds)
-        # self.sim: Simulation | None= None
 
         # Плоский вектор наблюдений (19 float32):
         #   position(3) + target_position(3) + delta_position(3) + wind(3)
@@ -63,15 +63,15 @@ class BalloonEnv(gym.Env):
 
         # На каждый эпизод создаём новое состояние, чтобы не переносить скрытые эффекты между reset().
         self._step_count = 0
+        self._pending_step = None
         episode_balloon = self._episode_balloon()
         self.sim = self._make_sim(episode_balloon)
         obs = self.to_obs(self.sim.snapshot())
         return obs, {}
 
     def step(self, action):
-        clipped_action = float(np.clip(np.asarray(action, dtype=np.float32), -self.action_limit, self.action_limit)[0])
+        clipped_action = self._clip_action(action)
         previous_position = np.array(self.sim.position, dtype=np.float32)
-        previous_energy = float(self.sim.energy_spent)
 
         self._step_count += 1
         result = self.sim.step(self.dt, clipped_action)
@@ -80,37 +80,64 @@ class BalloonEnv(gym.Env):
         current_distance = float(np.linalg.norm(result.target_position - result.position))
         progress_reward = previous_distance - current_distance
 
-        energy_delta = float(result.energy_spent - previous_energy)
-        energy_penalty = 0.01 * energy_delta
-
-        # Reward = прогресс к цели минус штраф за расход энергии.
-        # reward = progress_reward - energy_penalty
         reward = progress_reward
-        terminated = current_distance <= self.target_reach_radius
+        terminated = bool(current_distance <= float(self.target_reach_radius))
         # Эпизод принудительно завершается по достижению лимита шагов.
-        truncated = self._step_count >= self.max_episode_steps
+        truncated = bool(self._step_count >= self.max_episode_steps)
 
         if terminated:
             reward += 100.0
 
+        self._pending_step = self._build_step_record(
+            result=result,
+            clipped_action=clipped_action,
+            progress_reward=progress_reward,
+            current_distance=current_distance,
+            terminated=terminated,
+            truncated=truncated,
+        )
         info = {
-            "action": np.float32(clipped_action),
-            "progress_reward": progress_reward,
-            "energy_penalty": energy_penalty,
-            "distance_to_target": current_distance,
-            "energy_spent": float(result.energy_spent),
-            "position": np.array(result.position, dtype=np.float32),
-            "target_position": np.array(result.target_position, dtype=np.float32),
-            "delta_position": np.array(result.target_position - result.position, dtype=np.float32),
-            "wind": np.array(result.wind, dtype=np.float32),
-            "vertical_speed": float(result.vertical_speed),
-            "vertical_acceleration": float(result.vertical_acceleration),
-            "sim_time": self.sim.sim_time,
-            "terminated": terminated,
-            "truncated": truncated,
+            "progress_reward": float(progress_reward),
+            "distance_to_target": float(current_distance),
+            "terminated": bool(terminated),
+            "truncated": bool(truncated),
         }
 
         return self.to_obs(result), float(reward), terminated, truncated, info
+
+    def consume_step_record(self) -> dict[str, Any]:
+        """Отдать запись шага для trajectory-callback и очистить буфер.
+
+        В ``info`` остаются только скаляры для TensorBoard; полные данные шага
+        забираются здесь, чтобы ``DummyVecEnv`` не делал deepcopy numpy-массивов.
+        """
+        if self._pending_step is None:
+            return {}
+        record = self._pending_step
+        self._pending_step = None
+        return record
+
+    def _build_step_record(
+        self,
+        *,
+        result: SimResult,
+        clipped_action: float,
+        progress_reward: float,
+        current_distance: float,
+        terminated: bool,
+        truncated: bool,
+    ) -> dict[str, Any]:
+        return {
+            "position": [float(v) for v in result.position],
+            "wind": [float(v) for v in result.wind],
+            "target_position": [float(v) for v in result.target_position],
+            "action": float(clipped_action),
+            "reward": float(progress_reward),
+            "distance_to_target": float(current_distance),
+            "terminated": bool(terminated),
+            "truncated": bool(truncated),
+            "sim_time": str(self.sim.sim_time),
+        }
 
     def close(self) -> None:
         self.wind_interp.close()
@@ -122,6 +149,15 @@ class BalloonEnv(gym.Env):
         target_position = np.round(snapshot.target_position, 2)
         wind = np.round(snapshot.wind, 2)
         return f"pos={position.tolist()} target={target_position.tolist()} wind={wind.tolist()}"
+
+    def _clip_action(self, action) -> float:
+        value = float(np.asarray(action, dtype=np.float32).reshape(-1)[0])
+        limit = float(self.action_limit)
+        if value < -limit:
+            return -limit
+        if value > limit:
+            return limit
+        return value
 
     def to_obs(self, sim_result: SimResult) -> np.ndarray:
         """Плоский вектор наблюдений shape=(19,) dtype=float32."""

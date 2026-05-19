@@ -3,23 +3,33 @@ from __future__ import annotations
 from collections import defaultdict
 from multiprocessing import get_context
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
 from diplom.world import WorldBounds
-from diplom.viz.trajectory_plot import EpisodeVizData
 from diplom.train.trajectory_render_worker import (
     TrajectoryRenderRequest,
+    cleanup_snapshots_dir,
+    snapshot_path_for,
     start_trajectory_render_worker,
     stop_trajectory_render_worker,
     submit_trajectory_render,
+    write_trajectory_snapshot,
+)
+from diplom.train.trajectory_steps_io import (
+    EpisodeFileRef,
+    EnvStepsWriter,
+    cleanup_steps_dir,
 )
 
 
 class TrajectoryVisualizationCallback(BaseCallback):
     """Асинхронно рендерит HTML-файлы траекторий в отдельном процессе.
+
+    Шаги эпизодов пишутся в JSONL на диск по мере симуляции; в RAM хранятся
+    только пути к файлам и метаданные для последних ``max_history`` эпизодов.
 
     Args:
         output_dir: каталог для HTML-файлов (создаётся автоматически).
@@ -42,14 +52,8 @@ class TrajectoryVisualizationCallback(BaseCallback):
         self._render_queue = None
         self._render_process = None
 
-        # Шаги текущего (незавершённого) эпизода для каждой среды.
-        # Сбрасываются при done=True, накапливаются поперёк rollout-границ.
-        self._current_steps: Dict[int, List[dict]] = defaultdict(list)
-
-        # История завершённых эпизодов по env_idx (скользящее окно max_history).
-        self._history: Dict[int, List[EpisodeVizData]] = defaultdict(list)
-
-        # Счётчик завершённых эпизодов по env_idx (для метки на графике).
+        self._writers: Dict[int, EnvStepsWriter] = {}
+        self._history: Dict[int, List[EpisodeFileRef]] = defaultdict(list)
         self._episode_counts: Dict[int, int] = defaultdict(int)
         self._world_bounds: WorldBounds | None = None
 
@@ -68,97 +72,101 @@ class TrajectoryVisualizationCallback(BaseCallback):
             self._render_process = None
 
     def _on_training_end(self) -> None:
+        for writer in self._writers.values():
+            writer.close()
+        self._writers.clear()
+
         stop_trajectory_render_worker(self._render_queue, self._render_process)
         self._render_queue = None
         self._render_process = None
+        cleanup_snapshots_dir(self._output_dir)
+        cleanup_steps_dir(self._output_dir)
 
     # ──────────────────── Накопление шагов ────────────────────
 
     def _on_step(self) -> bool:
-        infos: List[Dict[str, Any]] = self.locals.get("infos", [])
-        dones: np.ndarray = self.locals.get("dones", np.zeros(len(infos), dtype=bool))
+        dones: np.ndarray = self.locals.get("dones", [])
+        step_records: list[dict[str, Any]] = self.training_env.env_method("consume_step_record")
 
-        for env_idx, (info, done) in enumerate(zip(infos, dones)):
-            self._current_steps[env_idx].append(_extract_step(info))
+        for env_idx, (record, done) in enumerate(zip(step_records, dones)):
+            if not record:
+                continue
+            self._writer_for(env_idx).append_step(record)
             if done:
-                self._finalize_episode(env_idx, info)
+                self._finalize_episode(env_idx, record)
 
         return True
 
-    def _finalize_episode(self, env_idx: int, last_info: Dict[str, Any]) -> None:
-        """Переместить накопленные шаги в историю при завершении эпизода."""
-        steps = list(self._current_steps[env_idx])
-        self._current_steps[env_idx].clear()
+    def _writer_for(self, env_idx: int) -> EnvStepsWriter:
+        writer = self._writers.get(env_idx)
+        if writer is None:
+            writer = EnvStepsWriter(self._output_dir, env_idx)
+            writer.open_current()
+            self._writers[env_idx] = writer
+        return writer
 
-        if not steps:
+    def _finalize_episode(self, env_idx: int, last_record: Dict[str, Any]) -> None:
+        """Закрыть JSONL текущего эпизода и добавить ссылку в историю."""
+        writer = self._writers.get(env_idx)
+        if writer is None or writer.step_count == 0:
             return
 
         self._episode_counts[env_idx] += 1
         ep_num = self._episode_counts[env_idx]
-        terminated = bool(last_info.get("terminated", False))
+        terminated = bool(last_record.get("terminated", False))
         outcome = "успех" if terminated else "truncated"
+        step_count = writer.step_count
 
-        episode = EpisodeVizData(
+        steps_path = writer.finalize_episode(ep_num)
+        target = _target_position_tuple(last_record)
+        episode_ref = EpisodeFileRef(
+            steps_path=steps_path,
             env_idx=env_idx,
-            steps=steps,
-            target_position=np.array(
-                last_info.get("target_position", [0.0, 0.0, 0.0]), dtype=np.float32
-            ),
-            label=f"ep {ep_num} ({outcome}, {len(steps)} шагов)",
+            target_position=target,
+            label=f"ep {ep_num} ({outcome}, {step_count} шагов)",
+            step_count=step_count,
         )
 
         history = self._history[env_idx]
-        history.append(episode)
+        history.append(episode_ref)
         if len(history) > self._max_history:
-            history.pop(0)
+            old_ref = history.pop(0)
+            old_ref.steps_path.unlink(missing_ok=True)
 
     # ──────────────────── Асинхронная запись с TensorBoard ────────────────────
 
     def _on_rollout_end(self) -> None:
-        """Отправить последний снапшот в фоновый процесс рендера."""
+        """Записать лёгкий снапшот (пути к JSONL) и передать воркеру."""
         if self._render_queue is None:
             return
 
-        payload = TrajectoryRenderRequest(
+        request = self._build_render_request()
+        snapshot_path = snapshot_path_for(self._output_dir, request.num_timesteps)
+        write_trajectory_snapshot(snapshot_path, request)
+        submit_trajectory_render(self._render_queue, snapshot_path)
+
+    def _build_render_request(self) -> TrajectoryRenderRequest:
+        current_steps_paths: dict[int, Path] = {}
+        current_step_counts: dict[int, int] = {}
+        for env_idx, writer in self._writers.items():
+            if writer.step_count > 0:
+                current_steps_paths[env_idx] = writer.current_path
+                current_step_counts[env_idx] = writer.step_count
+
+        return TrajectoryRenderRequest(
             num_timesteps=int(self.num_timesteps),
             n_envs=int(getattr(self.training_env, "num_envs", 1)),
             episode_counts=dict(self._episode_counts),
-            history={
-                env_idx: [_serialize_episode(episode) for episode in episodes]
-                for env_idx, episodes in self._history.items()
-            },
-            current_steps={
-                env_idx: [dict(step) for step in steps]
-                for env_idx, steps in self._current_steps.items()
-            },
+            history={env_idx: list(episodes) for env_idx, episodes in self._history.items()},
+            current_steps_paths=current_steps_paths,
+            current_step_counts=current_step_counts,
             world_bounds=self._world_bounds,
         )
-        submit_trajectory_render(self._render_queue, payload)
 
 
-def _serialize_episode(episode: EpisodeVizData) -> dict[str, Any]:
-    return {
-        "env_idx": int(episode.env_idx),
-        "steps": [dict(step) for step in episode.steps],
-        "target_position": np.asarray(episode.target_position, dtype=np.float32).tolist(),
-        "label": episode.label,
-    }
-
-
-def _extract_step(info: Dict[str, Any]) -> dict:
-    return {
-        "position": list(np.asarray(info.get("position", [0.0, 0.0, 0.0]), dtype=np.float32)),
-        "wind": list(np.asarray(info.get("wind", [0.0, 0.0, 0.0]), dtype=np.float32)),
-        "action": float(info.get("action", 0.0)),
-        "reward": float(info.get("progress_reward", 0.0)),
-        "distance_to_target": float(info.get("distance_to_target", 0.0)),
-        "terminated": bool(info.get("terminated", False)),
-        "truncated": bool(info.get("truncated", False)),
-        "sim_time": str(info.get("sim_time", "")),
-        "target_position": list(
-            np.asarray(info.get("target_position", [0.0, 0.0, 0.0]), dtype=np.float32)
-        ),
-    }
+def _target_position_tuple(record: Dict[str, Any]) -> tuple[float, float, float]:
+    values = record.get("target_position", [0.0, 0.0, 0.0])
+    return float(values[0]), float(values[1]), float(values[2])
 
 
 def _get_world_bounds(training_env) -> WorldBounds | None:

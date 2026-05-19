@@ -62,8 +62,46 @@ class Simulation:
         self._warned_world_bounds = False
         self._wind_buf = np.zeros(3, dtype=np.float32)
 
+        wb = self.world_bounds
+        self._x_min = float(wb.x_min)
+        self._x_max = float(wb.x_max)
+        self._y_min = float(wb.y_min)
+        self._y_max = float(wb.y_max)
+        self._z_min = float(wb.z_min)
+        self._z_max = float(wb.z_max)
+        self._time_min_ns = int(self.wind_interp.time_min.astype("datetime64[ns]"))
+        self._time_max_ns = int(self.wind_interp.time_max.astype("datetime64[ns]"))
+        self._time_min = self.wind_interp.time_min
+        self._time_max = self.wind_interp.time_max
+        self._max_vertical_speed = float(MAX_VERTICAL_SPEED)
+
+    @staticmethod
+    def _clamp_scalar(value: float, vmin: float, vmax: float) -> float:
+        if value < vmin:
+            return vmin
+        if value > vmax:
+            return vmax
+        return value
+
     def _clamp_time(self) -> None:
-        self.sim_time = np.clip(self.sim_time, self.wind_interp.time_min, self.wind_interp.time_max)
+        t_ns = int(self.sim_time.astype("datetime64[ns]"))
+        if t_ns < self._time_min_ns:
+            self.sim_time = self._time_min
+        elif t_ns > self._time_max_ns:
+            self.sim_time = self._time_max
+
+    def _apply_position(self, proposed_x: float, proposed_y: float, proposed_z: float) -> None:
+        self.position[0] = np.float32(self._clamp_scalar(proposed_x, self._x_min, self._x_max))
+        self.position[1] = np.float32(self._clamp_scalar(proposed_y, self._y_min, self._y_max))
+        self.position[2] = np.float32(self._clamp_scalar(proposed_z, self._z_min, self._z_max))
+
+    def _limit_vertical_speed(self) -> None:
+        vs = float(self.vertical_speed)
+        limit = self._max_vertical_speed
+        if vs < -limit:
+            self.vertical_speed = np.float32(-limit)
+        elif vs > limit:
+            self.vertical_speed = np.float32(limit)
 
     def snapshot(self) -> SimResult:
         """Собрать текущее состояние без шага по времени."""
@@ -94,12 +132,12 @@ class Simulation:
         proposed_y = self.position[1] + np.float32(wind.v) * dt
         proposed_z = self.position[2] + self.vertical_speed * dt
         if not self._warned_world_bounds and (
-            proposed_x < self.world_bounds.x_min
-            or proposed_x > self.world_bounds.x_max
-            or proposed_y < self.world_bounds.y_min
-            or proposed_y > self.world_bounds.y_max
-            or proposed_z < self.world_bounds.z_min
-            or proposed_z > self.world_bounds.z_max
+            proposed_x < self._x_min
+            or proposed_x > self._x_max
+            or proposed_y < self._y_min
+            or proposed_y > self._y_max
+            or proposed_z < self._z_min
+            or proposed_z > self._z_max
         ):
             self._warned_world_bounds = True
             env_label = f"env_{self.env_idx:03d}" if self.env_idx is not None else "env"
@@ -107,20 +145,18 @@ class Simulation:
                 (
                     f"[{env_label}] Аэростат вышел за границы симуляционного мира; "
                     f"координаты будут клампиться к диапазону "
-                    f"[{self.world_bounds.x_min:.0f}, {self.world_bounds.x_max:.0f}] м по X "
-                    f"и [{self.world_bounds.y_min:.0f}, {self.world_bounds.y_max:.0f}] м по Y "
-                    f"и [{self.world_bounds.z_min:.0f}, {self.world_bounds.z_max:.0f}] м по Z."
+                    f"[{self._x_min:.0f}, {self._x_max:.0f}] м по X "
+                    f"и [{self._y_min:.0f}, {self._y_max:.0f}] м по Y "
+                    f"и [{self._z_min:.0f}, {self._z_max:.0f}] м по Z."
                 ),
                 RuntimeWarning,
                 stacklevel=2,
             )
 
-        self.position[0] = np.clip(proposed_x, self.world_bounds.x_min, self.world_bounds.x_max)
-        self.position[1] = np.clip(proposed_y, self.world_bounds.y_min, self.world_bounds.y_max)
         # Ограничиваем саму высоту (не приращение) снизу и сверху границами вертикали датасета (ISA).
-        self.position[2] = np.clip(proposed_z, self.world_bounds.z_min, self.world_bounds.z_max)
+        self._apply_position(float(proposed_x), float(proposed_y), float(proposed_z))
         # Ограничиваем вертикальную скорость, чтобы предотвратить численный взрыв при сильном дисбалансе сил.
-        self.vertical_speed = np.clip(self.vertical_speed, -MAX_VERTICAL_SPEED, MAX_VERTICAL_SPEED)
+        self._limit_vertical_speed()
 
         return self._build_result(wind)
 
