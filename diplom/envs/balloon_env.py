@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Optional
 
 import gymnasium as gym
@@ -10,6 +11,7 @@ from diplom.config import BalloonConfig, EnvironmentConfig, SimulationConfig
 from diplom.sim.factory import create_simulation
 from diplom.sim.simulation import SimResult, Simulation
 from diplom.world import WorldBounds, resolve_balloon_config
+from diplom.train.trajectory_steps_io import EnvStepsWriter, EpisodeFileRef
 from diplom.wind.interp import WindInterpolator
 
 
@@ -46,6 +48,15 @@ class BalloonEnv(gym.Env):
         self._step_count = 0
         self._pending_step: dict[str, Any] | None = None
         self.base_balloon = resolve_balloon_config(config.balloon, self.world_bounds)
+
+        self._trajectory_max_history = max(1, int(config.trajectory_max_history))
+        self._steps_writer: EnvStepsWriter | None = None
+        self._episode_count = 0
+        self._episode_history: list[EpisodeFileRef] = []
+        if config.trajectory_steps_dir is not None:
+            writer_idx = env_idx if env_idx is not None else 0
+            self._steps_writer = EnvStepsWriter(Path(config.trajectory_steps_dir), writer_idx)
+            self._steps_writer.open_current()
 
         # Плоский вектор наблюдений (19 float32):
         #   position(3) + target_position(3) + delta_position(3) + wind(3)
@@ -88,7 +99,7 @@ class BalloonEnv(gym.Env):
         if terminated:
             reward += 100.0
 
-        self._pending_step = self._build_step_record(
+        step_record = self._build_step_record(
             result=result,
             clipped_action=clipped_action,
             progress_reward=progress_reward,
@@ -96,6 +107,11 @@ class BalloonEnv(gym.Env):
             terminated=terminated,
             truncated=truncated,
         )
+        self._pending_step = step_record
+        if self._steps_writer is not None:
+            self._steps_writer.append_step(step_record)
+            if terminated or truncated:
+                self._finalize_trajectory_episode(step_record)
         info = {
             "progress_reward": float(progress_reward),
             "distance_to_target": float(current_distance),
@@ -106,16 +122,54 @@ class BalloonEnv(gym.Env):
         return self.to_obs(result), float(reward), terminated, truncated, info
 
     def consume_step_record(self) -> dict[str, Any]:
-        """Отдать запись шага для trajectory-callback и очистить буфер.
+        """Отдать запись шага (rollout/отладка) и очистить буфер.
 
         В ``info`` остаются только скаляры для TensorBoard; полные данные шага
         забираются здесь, чтобы ``DummyVecEnv`` не делал deepcopy numpy-массивов.
+        При обучении JSONL пишется в subprocess через ``_steps_writer``.
         """
         if self._pending_step is None:
             return {}
         record = self._pending_step
         self._pending_step = None
         return record
+
+    def get_trajectory_viz_state(self) -> dict[str, Any]:
+        """Метаданные траекторий для снапшота рендера (один вызов за rollout)."""
+        if self._steps_writer is None:
+            return {}
+        env_idx = self.env_idx if self.env_idx is not None else 0
+        return {
+            "env_idx": env_idx,
+            "episode_count": self._episode_count,
+            "history": list(self._episode_history),
+            "current_steps_path": self._steps_writer.current_path,
+            "current_step_count": self._steps_writer.step_count,
+        }
+
+    def _finalize_trajectory_episode(self, last_record: dict[str, Any]) -> None:
+        if self._steps_writer is None or self._steps_writer.step_count == 0:
+            return
+
+        self._episode_count += 1
+        ep_num = self._episode_count
+        terminated = bool(last_record.get("terminated", False))
+        outcome = "успех" if terminated else "truncated"
+        step_count = self._steps_writer.step_count
+        steps_path = self._steps_writer.finalize_episode(ep_num)
+        target = tuple(float(v) for v in last_record.get("target_position", [0.0, 0.0, 0.0]))
+        env_idx = self.env_idx if self.env_idx is not None else 0
+        episode_ref = EpisodeFileRef(
+            steps_path=steps_path,
+            env_idx=env_idx,
+            target_position=target,
+            label=f"ep {ep_num} ({outcome}, {step_count} шагов)",
+            step_count=step_count,
+        )
+        self._episode_history.append(episode_ref)
+        if len(self._episode_history) > self._trajectory_max_history:
+            old_ref = self._episode_history.pop(0)
+            old_ref.steps_path.unlink(missing_ok=True)
 
     def _build_step_record(
         self,
@@ -140,6 +194,9 @@ class BalloonEnv(gym.Env):
         }
 
     def close(self) -> None:
+        if self._steps_writer is not None:
+            self._steps_writer.close()
+            self._steps_writer = None
         self.wind_interp.close()
 
     def render(self):

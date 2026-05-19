@@ -99,6 +99,9 @@ def compute_trajectory_bounds(
         min_z_span: минимальный размах по Z (м).
         world_bounds: реальные границы мира, если график нужно синхронизировать по датасету.
     """
+    if world_bounds is not None:
+        return _bounds_from_world(world_bounds)
+
     all_pos: List[List[float]] = []
 
     for ep in episodes:
@@ -115,15 +118,90 @@ def compute_trajectory_bounds(
                 all_pos.append(tp)
 
     if not all_pos:
+        return TrajectoryBounds(
+            xmin=0.0, xmax=1.0,
+            ymin=0.0, ymax=1.0,
+            zmin=0.0, zmax=MAX_HEIGHT,
+        )
+
+    return _bounds_from_positions(
+        all_pos,
+        margin=margin,
+        min_xy_span=min_xy_span,
+        min_z_span=min_z_span,
+        world_bounds=None,
+    )
+
+
+def compute_trajectory_bounds_from_positions(
+    positions: List[List[float]],
+    *,
+    margin: float = 0.25,
+    min_xy_span: float = 1000.0,
+    min_z_span: float = 200.0,
+    world_bounds: Optional[WorldBounds] = None,
+) -> TrajectoryBounds:
+    """Вычислить bbox только по списку координат (без загрузки полных шагов)."""
+    if world_bounds is not None:
+        return _bounds_from_world(world_bounds)
+    return _bounds_from_positions(
+        positions,
+        margin=margin,
+        min_xy_span=min_xy_span,
+        min_z_span=min_z_span,
+        world_bounds=None,
+    )
+
+
+def compute_trajectory_bounds_from_extents(
+    min_xyz: np.ndarray | None,
+    max_xyz: np.ndarray | None,
+    *,
+    margin: float = 0.25,
+    min_xy_span: float = 1000.0,
+    min_z_span: float = 200.0,
+    world_bounds: Optional[WorldBounds] = None,
+) -> TrajectoryBounds:
+    """BBox по уже посчитанным min/max координат (без списка всех точек)."""
+    if world_bounds is not None:
+        return _bounds_from_world(world_bounds)
+    if min_xyz is None or max_xyz is None:
+        return _bounds_from_extent_values(
+            xmin_raw=0.0, ymin_raw=0.0, zmin=0.0,
+            xmax_raw=1.0, ymax_raw=1.0, zmax=MAX_HEIGHT,
+            margin=margin, min_xy_span=min_xy_span, min_z_span=min_z_span,
+            has_points=False,
+        )
+    return _bounds_from_extent_values(
+        xmin_raw=float(min_xyz[0]), ymin_raw=float(min_xyz[1]), zmin=float(min_xyz[2]),
+        xmax_raw=float(max_xyz[0]), ymax_raw=float(max_xyz[1]), zmax=float(max_xyz[2]),
+        margin=margin, min_xy_span=min_xy_span, min_z_span=min_z_span,
+        has_points=True,
+    )
+
+
+def _bounds_from_world(world_bounds: WorldBounds) -> TrajectoryBounds:
+    return TrajectoryBounds(
+        xmin=world_bounds.x_min,
+        xmax=world_bounds.x_max,
+        ymin=world_bounds.y_min,
+        ymax=world_bounds.y_max,
+        zmin=world_bounds.z_min,
+        zmax=world_bounds.z_max,
+    )
+
+
+def _bounds_from_positions(
+    all_pos: List[List[float]],
+    *,
+    margin: float,
+    min_xy_span: float,
+    min_z_span: float,
+    world_bounds: Optional[WorldBounds] = None,
+) -> TrajectoryBounds:
+    if not all_pos:
         if world_bounds is not None:
-            return TrajectoryBounds(
-                xmin=world_bounds.x_min,
-                xmax=world_bounds.x_max,
-                ymin=world_bounds.y_min,
-                ymax=world_bounds.y_max,
-                zmin=world_bounds.z_min,
-                zmax=world_bounds.z_max,
-            )
+            return _bounds_from_world(world_bounds)
         return TrajectoryBounds(
             xmin=0.0, xmax=1.0,
             ymin=0.0, ymax=1.0,
@@ -133,17 +211,34 @@ def compute_trajectory_bounds(
     pos = np.array(all_pos, dtype=np.float32)
     xmin_raw, ymin_raw, zmin = pos.min(axis=0)
     xmax_raw, ymax_raw, zmax = pos.max(axis=0)
+    return _bounds_from_extent_values(
+        xmin_raw=float(xmin_raw), ymin_raw=float(ymin_raw), zmin=float(zmin),
+        xmax_raw=float(xmax_raw), ymax_raw=float(ymax_raw), zmax=float(zmax),
+        margin=margin, min_xy_span=min_xy_span, min_z_span=min_z_span,
+        has_points=True,
+    )
 
-    if world_bounds is not None:
-        xmin = world_bounds.x_min
-        xmax = world_bounds.x_max
-        ymin = world_bounds.y_min
-        ymax = world_bounds.y_max
-        zmin = world_bounds.z_min
-        zmax = world_bounds.z_max
-        return TrajectoryBounds(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, zmin=zmin, zmax=zmax)
 
-    # Применяем минимальный размах по каждой оси отдельно.
+def _bounds_from_extent_values(
+    *,
+    xmin_raw: float,
+    ymin_raw: float,
+    zmin: float,
+    xmax_raw: float,
+    ymax_raw: float,
+    zmax: float,
+    margin: float,
+    min_xy_span: float,
+    min_z_span: float,
+    has_points: bool,
+) -> TrajectoryBounds:
+    if not has_points:
+        return TrajectoryBounds(
+            xmin=0.0, xmax=1.0,
+            ymin=0.0, ymax=1.0,
+            zmin=0.0, zmax=MAX_HEIGHT,
+        )
+
     cx = (xmin_raw + xmax_raw) / 2
     cy = (ymin_raw + ymax_raw) / 2
     x_half = max((xmax_raw - xmin_raw) / 2, min_xy_span / 2)
@@ -164,8 +259,9 @@ def compute_trajectory_bounds(
     zmin = max(0.0, zmin - z_half * margin)
     zmax = min(MAX_HEIGHT, zmax + z_half * margin)
 
-    return TrajectoryBounds(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax,
-                            zmin=zmin, zmax=zmax)
+    return TrajectoryBounds(
+        xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax, zmin=zmin, zmax=zmax,
+    )
 
 
 def build_figure(
@@ -217,28 +313,35 @@ def build_episode_traces(episode: EpisodeVizData) -> List[go.BaseTraceType]:
     name = episode.label or f"env_{episode.env_idx}"
     group = f"ep_{episode.env_idx}_{id(episode)}"
 
-    hover_texts = [
-        (
-            f"шаг {i}<br>"
-            f"x={x[i]:.0f} м, y={y[i]:.0f} м, z={z[i]:.0f} м<br>"
-            f"reward={episode.steps[i].get('reward', 0.0):.3f}<br>"
-            f"действие={episode.steps[i].get('action', 0.0):.3f}<br>"
-            f"dist={episode.steps[i].get('distance_to_target', 0.0):.1f} м"
-        )
-        for i in range(n)
-    ]
+    rewards = np.fromiter(
+        (float(s.get("reward", 0.0)) for s in episode.steps), dtype=np.float32, count=n,
+    )
+    actions = np.fromiter(
+        (float(s.get("action", 0.0)) for s in episode.steps), dtype=np.float32, count=n,
+    )
+    distances = np.fromiter(
+        (float(s.get("distance_to_target", 0.0)) for s in episode.steps), dtype=np.float32, count=n,
+    )
+    customdata = np.column_stack((rewards, actions, distances))
 
-    progress = np.linspace(0, 1, n).tolist()
+    progress = np.linspace(0, 1, n, dtype=np.float32)
     line_colorscale = [[0.0, "rgba(180,180,180,0.35)"], [1.0, color]]
 
     traces: List[go.BaseTraceType] = [
         go.Scatter3d(
-            x=x.tolist(), y=y.tolist(), z=z.tolist(),
+            x=x, y=y, z=z,
             mode="lines",
             name=name,
             line=dict(color=progress, colorscale=line_colorscale, width=4),
-            hovertemplate="%{text}<extra></extra>",
-            text=hover_texts,
+            customdata=customdata,
+            hovertemplate=(
+                "шаг %{pointNumber}<br>"
+                "x=%{x:.0f} м, y=%{y:.0f} м, z=%{z:.0f} м<br>"
+                "reward=%{customdata[0]:.3f}<br>"
+                "действие=%{customdata[1]:.3f}<br>"
+                "dist=%{customdata[2]:.1f} м"
+                "<extra></extra>"
+            ),
             legendgroup=group,
         ),
         go.Scatter3d(

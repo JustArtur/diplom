@@ -136,6 +136,10 @@ class EnvironmentConfig:
     target_reach_radius: float = TARGET_REACH_RADIUS
     # Максимальное число шагов в одном эпизоде (защита от бесконечных эпизодов).
     max_episode_steps: int = MAX_EPISODE_STEPS
+    # Каталог JSONL-шагов для HTML-траекторий; None — не писать шаги на диск.
+    trajectory_steps_dir: Path | None = None
+    # Сколько завершённых эпизодов хранить на диске для одной среды (старые удаляются).
+    trajectory_max_history: int = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +167,10 @@ class TrainingConfig:
     device: str = "cpu"
     # Уровень логирования PPO в консоль (как verbose в Stable-Baselines3): 0 — тихо, 1 — таблица метрик.
     verbose: int = 1
+    # Гибрид: policy+env в subprocess, rollout через shared memory (n_envs > 1).
+    use_worker_policy_rollout: bool = True
+    # n_steps PPO на среду за rollout (должен совпадать с n_steps в PPO(...)).
+    ppo_n_steps: int = 4096
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,10 +16,16 @@ from diplom.viz.trajectory_plot import (
     TrajectoryBounds,
     apply_figure_layout,
     build_episode_traces,
-    compute_trajectory_bounds,
+    compute_trajectory_bounds_from_extents,
     save_figure,
 )
-from diplom.train.trajectory_steps_io import EpisodeFileRef, load_steps_jsonl
+from diplom.train.trajectory_steps_io import (
+    EpisodeFileRef,
+    accumulate_position_extents,
+    include_position_in_extents,
+    load_last_target_from_jsonl,
+    load_viz_steps_jsonl,
+)
 
 
 STOP_SENTINEL = "__STOP__"
@@ -67,13 +73,14 @@ def start_trajectory_render_worker(
     *,
     ctx,
     output_dir: Path,
+    daemon: bool = True,
 ) -> tuple[Queue, Any]:
     """Создать очередь и отдельный процесс для рендера траекторий."""
     task_queue: Queue = ctx.Queue(maxsize=1)
     process = ctx.Process(
         target=_render_worker_main,
         args=(task_queue, output_dir),
-        daemon=True,
+        daemon=daemon,
     )
     process.start()
     return task_queue, process
@@ -141,6 +148,18 @@ def _discard_queued_snapshot(task: Any) -> None:
 
 def _render_worker_main(task_queue: Queue, output_dir: Path) -> None:
     """Фоновый воркер, который строит HTML-файлы траекторий."""
+    from diplom.train.cpu_profiling import (
+        start_process_cprofile_if_enabled,
+        stop_process_cprofile_if_running,
+    )
+    from diplom.train.memory_profiling import (
+        TRAJECTORY_PROCESS_NAME,
+        start_process_memray_if_enabled,
+        stop_process_memray_if_running,
+    )
+
+    start_process_memray_if_enabled(TRAJECTORY_PROCESS_NAME)
+    start_process_cprofile_if_enabled(TRAJECTORY_PROCESS_NAME)
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -159,15 +178,44 @@ def _render_worker_main(task_queue: Queue, output_dir: Path) -> None:
                 snapshot_path.unlink(missing_ok=True)
     except Exception:  # noqa: BLE001
         traceback.print_exc()
+    finally:
+        stop_process_memray_if_running()
+        stop_process_cprofile_if_running()
 
 
 def _episode_from_file_ref(ref: EpisodeFileRef) -> EpisodeVizData:
     return EpisodeVizData(
         env_idx=ref.env_idx,
-        steps=load_steps_jsonl(ref.steps_path),
+        steps=load_viz_steps_jsonl(ref.steps_path, step_count=ref.step_count),
         target_position=np.asarray(ref.target_position, dtype=np.float32),
         label=ref.label,
     )
+
+
+def _snapshot_bounds(request: TrajectoryRenderRequest) -> TrajectoryBounds:
+    if request.world_bounds is not None:
+        wb = request.world_bounds
+        return TrajectoryBounds(
+            xmin=wb.x_min, xmax=wb.x_max,
+            ymin=wb.y_min, ymax=wb.y_max,
+            zmin=wb.z_min, zmax=wb.z_max,
+        )
+
+    min_xyz: np.ndarray | None = None
+    max_xyz: np.ndarray | None = None
+
+    for episodes in request.history.values():
+        for ref in episodes:
+            min_xyz, max_xyz = accumulate_position_extents(ref.steps_path, min_xyz, max_xyz)
+            min_xyz, max_xyz = include_position_in_extents(ref.target_position, min_xyz, max_xyz)
+
+    for steps_path in request.current_steps_paths.values():
+        min_xyz, max_xyz = accumulate_position_extents(steps_path, min_xyz, max_xyz)
+        last_target = load_last_target_from_jsonl(steps_path)
+        if last_target is not None:
+            min_xyz, max_xyz = include_position_in_extents(last_target, min_xyz, max_xyz)
+
+    return compute_trajectory_bounds_from_extents(min_xyz, max_xyz)
 
 
 def _render_snapshot(
@@ -175,36 +223,35 @@ def _render_snapshot(
     output_dir: Path,
 ) -> None:
     """Построить и сохранить HTML для снимка траекторий."""
-    history: dict[int, list[EpisodeVizData]] = {}
-    for env_idx, episodes in request.history.items():
-        history[env_idx] = [_episode_from_file_ref(episode) for episode in episodes]
-
-    current_steps: dict[int, list[dict[str, Any]]] = {
-        env_idx: load_steps_jsonl(steps_path)
-        for env_idx, steps_path in request.current_steps_paths.items()
-    }
-
-    all_episodes = [ep for env_hist in history.values() for ep in env_hist]
-    all_current = [step for steps in current_steps.values() for step in steps]
-    bounds = compute_trajectory_bounds(all_episodes, all_current, world_bounds=request.world_bounds)
+    bounds = _snapshot_bounds(request)
 
     for env_idx in range(request.n_envs):
-        history_items = history.get(env_idx, [])
-        current_env_steps = current_steps.get(env_idx, [])
-        if not history_items and not current_env_steps:
+        episode_refs = request.history.get(env_idx, [])
+        current_path = request.current_steps_paths.get(env_idx)
+        current_step_count = request.current_step_counts.get(env_idx, 0)
+        current_env_steps = (
+            load_viz_steps_jsonl(current_path, step_count=current_step_count)
+            if current_path
+            else []
+        )
+        if not episode_refs and not current_env_steps:
             continue
 
-        live_step_count = request.current_step_counts.get(env_idx, len(current_env_steps))
-        fig = _build_figure_for_env(
-            env_idx=env_idx,
-            history=history_items,
-            current_steps=current_env_steps,
-            live_step_count=live_step_count,
-            bounds=bounds,
-            num_timesteps=request.num_timesteps,
-            episode_count=request.episode_counts.get(env_idx, 0),
-        )
-        save_figure(fig, output_dir / f"env_{env_idx:03d}.html")
+        history_items = [_episode_from_file_ref(episode) for episode in episode_refs]
+        try:
+            live_step_count = request.current_step_counts.get(env_idx, len(current_env_steps))
+            fig = _build_figure_for_env(
+                env_idx=env_idx,
+                history=history_items,
+                current_steps=current_env_steps,
+                live_step_count=live_step_count,
+                bounds=bounds,
+                num_timesteps=request.num_timesteps,
+                episode_count=request.episode_counts.get(env_idx, 0),
+            )
+            save_figure(fig, output_dir / f"env_{env_idx:03d}.html")
+        finally:
+            del history_items, current_env_steps
 
 
 def _build_figure_for_env(

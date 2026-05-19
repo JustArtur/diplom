@@ -44,6 +44,7 @@ def _build_app_config(
     n_envs: int = DEFAULT_TRAINING_CONFIG.n_envs,
     device: str = DEFAULT_TRAINING_CONFIG.device,
     verbose: int = DEFAULT_TRAINING_CONFIG.verbose,
+    use_worker_policy_rollout: bool = DEFAULT_TRAINING_CONFIG.use_worker_policy_rollout,
     target_reach_radius: float = DEFAULT_ENVIRONMENT_CONFIG.target_reach_radius,
     start_time: datetime = datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
 ) -> AppConfig:
@@ -59,6 +60,7 @@ def _build_app_config(
             n_envs=n_envs,
             device=device,
             verbose=verbose,
+            use_worker_policy_rollout=use_worker_policy_rollout,
         ),
         visualization=VisualizationConfig(
             window_size=DEFAULT_VISUALIZATION_CONFIG.window_size,
@@ -166,6 +168,16 @@ def train_ppo(
         "--in-process",
         help="Одна среда в DummyVecEnv (для profile-ppo-mem/cpu; не использовать в боевом обучении)",
     ),
+    trajectories: bool = typer.Option(
+        True,
+        "--trajectories/--no-trajectories",
+        help="HTML-траектории и JSONL шагов (отключите для максимальной скорости)",
+    ),
+    main_policy_rollout: bool = typer.Option(
+        False,
+        "--main-policy-rollout",
+        help="Отладка: policy+step в main (ShmemSubprocVecEnv), без гибрида worker+shmem",
+    ),
     verbose: int = typer.Option(
         DEFAULT_TRAINING_CONFIG.verbose,
         "--verbose",
@@ -185,11 +197,16 @@ def train_ppo(
         n_envs=PROFILE_N_ENVS if in_process else n_envs,
         device=device,
         verbose=verbose,
+        use_worker_policy_rollout=not main_policy_rollout,
         target_reach_radius=target_reach_radius,
         start_time=start_time,
     )
     try:
-        run_train_ppo(app_config, force_dummy_vec_env=in_process)
+        run_train_ppo(
+            app_config,
+            force_dummy_vec_env=in_process,
+            enable_trajectory_viz=trajectories,
+        )
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -260,38 +277,83 @@ def profile_ppo_mem(
         datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
         help="Базовое время симуляции",
     ),
+    n_envs: int = typer.Option(
+        DEFAULT_TRAINING_CONFIG.n_envs,
+        "--envs",
+        "-e",
+        help="Число параллельных сред (SubprocVecEnv); по одному memray на процесс env_NNN",
+    ),
+    single_process: bool = typer.Option(
+        False,
+        "--single-process",
+        help="Одна среда в DummyVecEnv, один memray-файл (как раньше; для быстрой отладки)",
+    ),
+    profile_main: bool = typer.Option(
+        False,
+        "--profile-main",
+        help="Профилировать главный процесс (PPO, callbacks)",
+    ),
+    profile_envs: bool = typer.Option(
+        False,
+        "--profile-envs",
+        help="Профилировать воркеры SubprocVecEnv (env_000, env_001, …)",
+    ),
+    profile_trajectory: bool = typer.Option(
+        False,
+        "--profile-trajectory",
+        help="Профилировать процесс рендера HTML траекторий",
+    ),
+    main_policy_rollout: bool = typer.Option(
+        False,
+        "--main-policy-rollout",
+        help="Policy+step в main (без гибрида worker+shmem)",
+    ),
 ) -> None:
-    """Профиль памяти при обучении PPO (memray): одна среда, один процесс.
+    """Профиль памяти при обучении PPO (memray).
+
+    Профилирование выключено, пока не передан хотя бы один флаг --profile-*.
+    Каждый включённый процесс пишет свой файл в <logdir>/PPO_N/memray/<имя>.bin.
 
     CPU (время): diplom profile-ppo-cpu. Запускайте отдельно — совмещение сильно замедляет прогон.
 
     Установка: poetry install --with dev
 
     \b
-      diplom profile-ppo-mem -t 50000
-      diplom profile-ppo-mem -t 50000 --native
-      open runs/profile_ppo/PPO_0/memray.html
+      diplom profile-ppo-mem -t 50000 -e 8 --profile-main --profile-envs --profile-trajectory
+      diplom profile-ppo-mem -t 50000 --profile-main
+      diplom profile-ppo-mem -t 50000 --single-process --profile-main
+      open runs/profile_ppo/PPO_0/memray/main.html
     """
+    from diplom.train.memory_profiling import MemrayProfileTargets
     from diplom.train.profiling import PROFILE_N_ENVS, MemrayNotFoundError, run_memray_train
 
+    profile_targets = MemrayProfileTargets(
+        main=profile_main,
+        envs=profile_envs,
+        trajectory=profile_trajectory,
+    )
+    effective_n_envs = PROFILE_N_ENVS if single_process else n_envs
     app_config = _build_app_config(
         total_timesteps=total_timesteps,
         seed=seed,
         logdir=logdir,
-        n_envs=PROFILE_N_ENVS,
+        n_envs=effective_n_envs,
         device=device,
         verbose=verbose,
+        use_worker_policy_rollout=not main_policy_rollout,
         target_reach_radius=target_reach_radius,
         start_time=start_time,
     )
     try:
-        bin_path, html_path = run_memray_train(
+        run_dir, reports = run_memray_train(
             app_config,
             output=output,
             flamegraph=flamegraph,
             skip_flamegraph=no_flamegraph,
             native_traces=native,
             print_table=not no_table,
+            multiprocess=not single_process,
+            profile_targets=profile_targets,
         )
     except MemrayNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -300,9 +362,11 @@ def profile_ppo_mem(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    typer.echo(f"Run: {bin_path.parent}")
-    if html_path is not None:
-        typer.echo(f"Flame graph: {html_path}")
+    typer.echo(f"Run: {run_dir}")
+    for report in reports:
+        typer.echo(f"  {report.process_name}: {report.bin_path}")
+        if report.html_path is not None:
+            typer.echo(f"    flame graph: {report.html_path}")
 
 
 @app.command("profile-ppo-cpu")
@@ -345,33 +409,91 @@ def profile_ppo_cpu(
     start_time: datetime = typer.Option(
         datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
     ),
+    n_envs: int = typer.Option(
+        DEFAULT_TRAINING_CONFIG.n_envs,
+        "--envs",
+        "-e",
+        help="Число параллельных сред (SubprocVecEnv); по одному .prof на процесс env_NNN",
+    ),
+    single_process: bool = typer.Option(
+        False,
+        "--single-process",
+        help="Одна среда в DummyVecEnv, один .prof (для быстрой отладки)",
+    ),
+    profile_main: bool = typer.Option(
+        False,
+        "--profile-main",
+        help="Профилировать главный процесс (PPO, callbacks)",
+    ),
+    profile_envs: bool = typer.Option(
+        False,
+        "--profile-envs",
+        help="Профилировать воркеры SubprocVecEnv (env_000, env_001, …)",
+    ),
+    profile_trajectory: bool = typer.Option(
+        False,
+        "--profile-trajectory",
+        help="Профилировать процесс рендера HTML траекторий",
+    ),
+    no_stats: bool = typer.Option(
+        False,
+        "--no-stats",
+        help="Не выводить таблицу pstats в терминал",
+    ),
+    main_policy_rollout: bool = typer.Option(
+        False,
+        "--main-policy-rollout",
+        help="Policy+step в main (без гибрида worker+shmem)",
+    ),
 ) -> None:
-    """Профиль CPU (cProfile): одна среда, один процесс.
+    """Профиль CPU (cProfile) при обучении PPO.
+
+    Профилирование выключено, пока не передан хотя бы один флаг --profile-*.
+    Каждый включённый процесс пишет свой файл в <logdir>/PPO_N/cprofile/<имя>.prof.
 
     Память: diplom profile-ppo-mem (memray). Запускайте отдельно от profile-ppo-cpu.
 
     \b
-      diplom profile-ppo-cpu -t 50000
-      snakeviz runs/profile_ppo/PPO_0/profile.prof
+      diplom profile-ppo-cpu -t 50000 -e 8 --profile-main --profile-envs
+      diplom profile-ppo-cpu -t 50000 --single-process --profile-main
+      snakeviz runs/profile_ppo/PPO_0/cprofile/main.prof
     """
+    from diplom.train.memory_profiling import MemrayProfileTargets
     from diplom.train.profiling import PROFILE_N_ENVS, run_cprofile_train
 
+    profile_targets = MemrayProfileTargets(
+        main=profile_main,
+        envs=profile_envs,
+        trajectory=profile_trajectory,
+    )
+    effective_n_envs = PROFILE_N_ENVS if single_process else n_envs
     app_config = _build_app_config(
         total_timesteps=total_timesteps,
         seed=seed,
         logdir=logdir,
-        n_envs=PROFILE_N_ENVS,
+        n_envs=effective_n_envs,
         device=device,
         verbose=verbose,
+        use_worker_policy_rollout=not main_policy_rollout,
         target_reach_radius=target_reach_radius,
         start_time=start_time,
     )
     try:
-        prof_path = run_cprofile_train(app_config, output=output, top_lines=top_lines)
-        typer.echo(f"Run: {prof_path.parent}")
+        run_dir, reports = run_cprofile_train(
+            app_config,
+            output=output,
+            top_lines=top_lines,
+            multiprocess=not single_process,
+            profile_targets=profile_targets,
+            print_stats=not no_stats,
+        )
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Run: {run_dir}")
+    for report in reports:
+        typer.echo(f"  {report.process_name}: {report.prof_path}")
 
 
 # ──────────────────── rollout ────────────────────

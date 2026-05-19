@@ -7,7 +7,7 @@ from typing import Sequence, Union
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
-from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv
 
 from diplom.config import AppConfig, EnvironmentConfig, WindConfig
 from diplom.envs.balloon_env import BalloonEnv
@@ -19,7 +19,6 @@ from diplom.world import log_world_bounds
 from diplom.wind.factory import build_wind_interpolator
 from diplom.wind.interp import ensure_wind_interpolator_cache
 
-
 def _env_factory(
     env_config: EnvironmentConfig,
     wind_config: WindConfig,
@@ -30,10 +29,21 @@ def _env_factory(
     Функция должна быть определена на уровне модуля (не lambda и не closure),
     чтобы pickle мог сериализовать её при передаче в SubprocVecEnv.
     """
+    from diplom.train.cpu_profiling import start_process_cprofile_if_enabled
+    from diplom.train.memory_profiling import env_process_name, start_process_memray_if_enabled
+
+    process_name = env_process_name(env_idx)
+    start_process_memray_if_enabled(process_name)
+    start_process_cprofile_if_enabled(process_name)
     return build_env(env_config, wind_config, env_idx=env_idx)
 
 
-def _make_vec_env(config: AppConfig, *, force_dummy: bool = False) -> Union[DummyVecEnv, SubprocVecEnv]:
+def _make_vec_env(
+    config: AppConfig,
+    *,
+    force_dummy: bool = False,
+    trajectory_steps_dir: Path | None = None,
+) -> VecEnv:
     n_envs = max(1, config.training.n_envs)
     ensure_wind_interpolator_cache(config.wind.path)
     # Включаем рандомизацию старта — нужна при обучении.
@@ -41,6 +51,7 @@ def _make_vec_env(config: AppConfig, *, force_dummy: bool = False) -> Union[Dumm
         config.environment,
         randomize_start_state=True,
         randomize_start_time=True,
+        trajectory_steps_dir=trajectory_steps_dir,
     )
     factories = [
         partial(_env_factory, env_config=env_config, wind_config=config.wind, env_idx=env_idx)
@@ -51,9 +62,19 @@ def _make_vec_env(config: AppConfig, *, force_dummy: bool = False) -> Union[Dumm
     if force_dummy or n_envs == 1:
         return DummyVecEnv(factories)
 
-    # start_method="spawn" безопасен на macOS и Windows (fork может дедлочить
-    # внутренние потоки xarray/netCDF4).
-    return SubprocVecEnv(factories, start_method="spawn")
+    if config.training.use_worker_policy_rollout:
+        from diplom.train.policy_shmem_rollout_vec_env import PolicyShmemSubprocVecEnv
+
+        return PolicyShmemSubprocVecEnv(
+            factories,
+            rollout_steps=config.training.ppo_n_steps,
+            start_method="spawn",
+        )
+
+    # Режим отладки (--main-policy-rollout): policy в main, shmem на каждый step.
+    from diplom.train.shmem_vec_env import ShmemSubprocVecEnv
+
+    return ShmemSubprocVecEnv(factories, start_method="spawn")
 
 
 def train_ppo(
@@ -62,6 +83,7 @@ def train_ppo(
     *,
     force_dummy_vec_env: bool = False,
     run_dir: Path | None = None,
+    enable_trajectory_viz: bool = True,
 ) -> Path:
     """Train PPO agent on the balloon environment.
 
@@ -76,7 +98,23 @@ def train_ppo(
     ppo_verbose = config.training.verbose
     print(f"[train_ppo] Using device={device}")  # noqa: T201
 
-    vec_env = _make_vec_env(config, force_dummy=force_dummy_vec_env)
+    if run_dir is None:
+        run_dir = next_run_dir(logdir)
+    else:
+        run_dir.mkdir(parents=True, exist_ok=True)
+    traj_dir = run_dir / "trajectories"
+    print(f"[train_ppo] Run directory: {run_dir}")  # noqa: T201
+
+    trajectory_steps_dir = traj_dir if enable_trajectory_viz else None
+    vec_env = _make_vec_env(
+        config,
+        force_dummy=force_dummy_vec_env,
+        trajectory_steps_dir=trajectory_steps_dir,
+    )
+    if config.training.use_worker_policy_rollout and not force_dummy_vec_env and config.training.n_envs > 1:
+        print("[train_ppo] VecEnv: PolicyShmemSubprocVecEnv (гибрид worker+shmem)")  # noqa: T201
+    elif not force_dummy_vec_env and config.training.n_envs > 1:
+        print("[train_ppo] VecEnv: ShmemSubprocVecEnv (policy в main, --main-policy-rollout)")  # noqa: T201
     info_callback = InfoLoggingCallback()
 
     probe_interp = build_wind_interpolator(config.wind)
@@ -91,16 +129,24 @@ def train_ppo(
     finally:
         probe_interp.close()
 
-    if run_dir is None:
-        run_dir = next_run_dir(logdir)
-    else:
-        run_dir.mkdir(parents=True, exist_ok=True)
-    traj_dir = run_dir / "trajectories"
-    print(f"[train_ppo] Run directory: {run_dir}")  # noqa: T201
-    traj_callback = TrajectoryVisualizationCallback(output_dir=traj_dir)
+    traj_callback = (
+        TrajectoryVisualizationCallback(output_dir=traj_dir) if enable_trajectory_viz else None
+    )
 
     model_path = logdir / "ppo_model.zip"
+    use_worker_rollout = (
+        config.training.use_worker_policy_rollout
+        and not force_dummy_vec_env
+        and config.training.n_envs > 1
+    )
+    ppo_cls: type[PPO] = PPO
+    if use_worker_rollout:
+        from diplom.train.ppo_worker_rollout import WorkerRolloutPPO
+
+        ppo_cls = WorkerRolloutPPO
+
     model: PPO
+
     def _save_model() -> None:
         model.save(logdir / "ppo_model")
         print(f"[train_ppo] Модель сохранена в {model_path}")  # noqa: T201
@@ -110,15 +156,15 @@ def train_ppo(
         # Иначе инициализируем новую.
         if model_path.exists():
             print(f"[train_ppo] Продолжаем обучение из {model_path}")  # noqa: T201
-            model = PPO.load(model_path, env=vec_env, device=device)
+            model = ppo_cls.load(model_path, env=vec_env, device=device)
             model.tensorboard_log = str(run_dir)
         else:
-            model = PPO(
+            model = ppo_cls(
                 policy="MlpPolicy",
                 env=vec_env,
                 # Собираем больше опыта перед каждым обновлением — лучше
                 # использование данных и меньше накладных расходов обновления.
-                n_steps=4096,
+                n_steps=config.training.ppo_n_steps,
                 # 512 делит rollout_size=4096*n_envs нацело и эффективнее на MPS/CPU.
                 batch_size=512,
                 n_epochs=10,
@@ -138,10 +184,14 @@ def train_ppo(
             )
         model.verbose = ppo_verbose
         extra_callbacks = list(callbacks) if callbacks is not None else []
+        learn_callbacks: list[BaseCallback] = [info_callback]
+        if traj_callback is not None:
+            learn_callbacks.append(traj_callback)
+        learn_callbacks.extend(extra_callbacks)
         try:
             model.learn(
                 total_timesteps=config.training.total_timesteps,
-                callback=CallbackList([info_callback, traj_callback, *extra_callbacks]),
+                callback=CallbackList(learn_callbacks),
                 reset_num_timesteps=True,
                 tb_log_name="tb",
             )
