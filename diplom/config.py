@@ -78,13 +78,13 @@ class DownloadConfig:
     # Куда сохранять скачанный ERA5-файл.
     outfile: Path = Path("data/era5_sample.nc")
     # Северная граница области запроса.
-    north: float = 64.0
+    north: float = 60.0
     # Западная граница области запроса.
-    west: float = 45.0
+    west: float = 40.0
     # Южная граница области запроса.
-    south: float = 47.0
+    south: float = 40.0
     # Восточная граница области запроса.
-    east: float = 62.0
+    east: float = 65.0
     # Начало периода скачивания.
     start: str = "2024-07-01"
     # Конец периода скачивания.
@@ -152,13 +152,17 @@ class TrainingConfig:
     total_timesteps: int = 4_000_000
     # Seed для воспроизводимости.
     seed: int = 0
-    # Каталог для чекпоинтов и метрик обучения.
+    # Каталог для чекпоинтов и метрик обучения (run-ы: PPO_0/tb, PPO_0/trajectories, …).
     logdir: Path = Path("runs/ppo")
+    # Каталог run-ов при profile-ppo-mem / profile-ppo-cpu.
+    profile_logdir: Path = Path("runs/profile_ppo")
     # Количество параллельных сред. M1 Pro имеет 10 ядер (8P+2E),
     # больше 8 даёт только IPC-overhead без прироста скорости.
     n_envs: int = 8
     # Устройство для нейросети PPO: cpu | cuda | mps (см. diplom.torch_device.resolve_torch_device).
     device: str = "cpu"
+    # Уровень логирования PPO в консоль (как verbose в Stable-Baselines3): 0 — тихо, 1 — таблица метрик.
+    verbose: int = 0
 
 
 @dataclass(frozen=True, slots=True)

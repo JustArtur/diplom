@@ -19,11 +19,22 @@ import numpy as np
 import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
 
-from diplom.geo import altitude_to_pressure_hpa, meters_per_deg_lat, meters_per_deg_lon
+from diplom.geo import altitude_to_pressure_hpa, altitude_to_pressure_hpa_scalar, meters_per_deg_lat, meters_per_deg_lon
 from diplom.world import WorldBounds, world_bounds_from_axes
 
 
 # ──────────────────── Конвертация вертикальной скорости ────────────────────
+
+_R_DRY_AIR = 287.058  # Дж/(кг·К)
+_GRAVITY = 9.80665  # м/с²
+
+
+def omega_to_w_mps_scalar(omega_pa_s: float, pressure_hpa: float, temperature_k: float) -> float:
+    """Scalar-версия `omega_to_w_mps` для hot path (одна точка после интерполяции)."""
+    p_pa = float(pressure_hpa) * 100.0
+    safe_p = p_pa if p_pa > 1.0 else 1.0
+    return -float(omega_pa_s) * _R_DRY_AIR * float(temperature_k) / (safe_p * _GRAVITY)
+
 
 def omega_to_w_mps(omega_pa_s: np.ndarray, pressure_hpa: np.ndarray, temperature_k: np.ndarray, ) -> np.ndarray:
     """Конвертация давленческой скорости omega (Па/с) → вертикальная скорость w (м/с).
@@ -42,8 +53,8 @@ def omega_to_w_mps(omega_pa_s: np.ndarray, pressure_hpa: np.ndarray, temperature
     Положительное w = восходящее движение.
     """
 
-    r_dry = 287.058  # газовая постоянная сухого воздуха (Дж/(кг·К))
-    g = 9.80665  # ускорение свободного падения (м/с²)
+    r_dry = _R_DRY_AIR
+    g = _GRAVITY
 
     p_pa = np.asarray(pressure_hpa, dtype=np.float32) * np.float32(100.0)  # гПа → Па
     safe_p = np.where(p_pa > 1.0, p_pa, np.float32(1.0))  # защита от деления на 0
@@ -260,12 +271,16 @@ class WindInterpolator:
     longitude_axis_deg: np.ndarray
     world_bounds: WorldBounds = field(init=False, repr=False)
 
-    # scipy-интерполяторы — строятся в __post_init__, не передаются извне
-    _interp_u: RegularGridInterpolator = field(init=False, repr=False)
-    _interp_v: RegularGridInterpolator = field(init=False, repr=False)
-    _interp_w: RegularGridInterpolator = field(init=False, repr=False)
-    _interp_t: RegularGridInterpolator = field(init=False, repr=False)
+    # Один vector-valued интерполятор (u, v, w, t) — строится в __post_init__
+    _interp: RegularGridInterpolator = field(init=False, repr=False)
     _time_axis_float: np.ndarray = field(init=False, repr=False)
+    _m_per_lat: float = field(init=False, repr=False)
+    _m_per_lon: float = field(init=False, repr=False)
+    _time_min_float: float = field(init=False, repr=False)
+    _time_max_float: float = field(init=False, repr=False)
+    _p_clip_min: float = field(init=False, repr=False)
+    _p_clip_max: float = field(init=False, repr=False)
+    _pt_buf: np.ndarray = field(init=False, repr=False)
     _lat_min: float = field(init=False, repr=False)
     _lat_max: float = field(init=False, repr=False)
     _lon_min: float = field(init=False, repr=False)
@@ -287,7 +302,7 @@ class WindInterpolator:
         self._build_scipy_interpolators()
 
     def _build_scipy_interpolators(self) -> None:
-        """Собрать `RegularGridInterpolator` поверх общего кэша."""
+        """Собрать один vector-valued `RegularGridInterpolator` поверх общего кэша."""
         self._lat_min = float(self.latitude_axis_deg[0])
         self._lat_max = float(self.latitude_axis_deg[-1])
         self._lon_min = float(self.longitude_axis_deg[0])
@@ -311,11 +326,24 @@ class WindInterpolator:
             self.longitude_axis_deg,
         )
 
-        kw = {"method": "linear", "bounds_error": False}
-        self._interp_u = RegularGridInterpolator(axes, self.data[0], fill_value=0.0, **kw)
-        self._interp_v = RegularGridInterpolator(axes, self.data[1], fill_value=0.0, **kw)
-        self._interp_w = RegularGridInterpolator(axes, self.data[2], fill_value=0.0, **kw)
-        self._interp_t = RegularGridInterpolator(axes, self.data[3], fill_value=288.15, **kw)
+        # (4, T, P, Lat, Lon) → (T, P, Lat, Lon, 4): view без копии memmap.
+        values = np.moveaxis(self.data, 0, -1)
+        fill_value = np.array([0.0, 0.0, 0.0, 288.15], dtype=np.float64)
+        self._interp = RegularGridInterpolator(
+            axes,
+            values,
+            method="linear",
+            bounds_error=False,
+            fill_value=fill_value,
+        )
+
+        self._m_per_lat = meters_per_deg_lat(self.origin_lat)
+        self._m_per_lon = meters_per_deg_lon(self.origin_lat)
+        self._time_min_float = float(self._time_min.astype("datetime64[ns]").astype(np.float64))
+        self._time_max_float = float(self._time_max.astype("datetime64[ns]").astype(np.float64))
+        self._p_clip_min = min(self._p_min, self._p_max)
+        self._p_clip_max = max(self._p_min, self._p_max)
+        self._pt_buf = np.empty((1, 4), dtype=np.float64)
 
     @property
     def time_min(self) -> np.datetime64:
@@ -415,6 +443,39 @@ class WindInterpolator:
 
         return lat.astype(np.float64), lon.astype(np.float64)
 
+    def _xy_to_latlon_scalar(self, x_m: float, y_m: float) -> tuple[float, float]:
+        """Локальные метры (x, y) → (lat, lon) для одной точки без numpy-массивов."""
+        raw_lat = self.origin_lat + y_m / self._m_per_lat
+        raw_lon = self.origin_lon + x_m / self._m_per_lon
+        lat = min(max(raw_lat, self._lat_min), self._lat_max)
+        lon = min(max(raw_lon, self._lon_min), self._lon_max)
+
+        if not self._warned_dataset_bounds and (raw_lat != lat or raw_lon != lon):
+            self._warned_dataset_bounds = True
+            env_label = f"env_{self.env_idx:03d}" if self.env_idx is not None else "env"
+            warnings.warn(
+                (
+                    f"[{env_label}] Позиция аэростата вышла за границы ERA5-датасета; "
+                    "координаты будут клампиться к доступному диапазону "
+                    f"lat=[{self._lat_min:.3f}, {self._lat_max:.3f}], "
+                    f"lon=[{self._lon_min:.3f}, {self._lon_max:.3f}]."
+                ),
+                RuntimeWarning,
+                stacklevel=3,
+            )
+
+        return lat, lon
+
+    def _z_to_pressure_scalar(self, z_m: float) -> float:
+        """Высота (м) → давление (гПа) для одной точки."""
+        p = altitude_to_pressure_hpa_scalar(z_m)
+        return min(max(p, self._p_clip_min), self._p_clip_max)
+
+    def _time_to_float_scalar(self, time: np.datetime64) -> float:
+        """datetime64 → float64 (наносекунды) для одной точки."""
+        t_ns = float(np.datetime64(time, "ns").astype(np.float64))
+        return min(max(t_ns, self._time_min_float), self._time_max_float)
+
     def _z_to_pressure(self, z_m: np.ndarray) -> np.ndarray:
         """Высота (м) → давление (гПа) с кламп к диапазону датасета."""
         p = altitude_to_pressure_hpa(z_m).astype(np.float64)
@@ -431,17 +492,18 @@ class WindInterpolator:
 
     def vector_at(self, x: float, y: float, z: float, time: np.datetime64) -> WindSample:
         """Вектор ветра (u, v, w) м/с, температура (K) и давление (гПа) в заданной точке."""
-        lat, lon = self._xy_to_latlon(np.array([x]), np.array([y]))
-        level = self._z_to_pressure(np.array([z]))
-        t = self._time_to_float(np.array([time]))
+        lat, lon = self._xy_to_latlon_scalar(x, y)
+        level = self._z_to_pressure_scalar(z)
+        t = self._time_to_float_scalar(time)
 
-        pt = np.column_stack([t, level, lat, lon])
-        u = np.float32(self._interp_u(pt)[0])
-        v = np.float32(self._interp_v(pt)[0])
-        w_omega = np.float32(self._interp_w(pt)[0])
-        temp = np.float32(self._interp_t(pt)[0])
-        w = np.float32(omega_to_w_mps(np.array([w_omega]), level, np.array([temp]))[0])
-        return WindSample(u=u, v=v, w=w, temperature=temp, pressure=np.float32(level[0]))
+        pt = self._pt_buf
+        pt[0, 0] = t
+        pt[0, 1] = level
+        pt[0, 2] = lat
+        pt[0, 3] = lon
+        u, v, w_omega, temp = self._interp(pt)[0]
+        w = omega_to_w_mps_scalar(float(w_omega), level, float(temp))
+        return WindSample(u=float(u), v=float(v), w=w, temperature=float(temp), pressure=level)
 
     def batch_vector_at(self, x: np.ndarray, y: np.ndarray, z: np.ndarray, time: np.ndarray) -> np.ndarray:
         """Векторы ветра (u, v, w) м/с для батча точек. Shape: (n, 3)."""
@@ -450,11 +512,8 @@ class WindInterpolator:
         t = self._time_to_float(time)
 
         pt = np.column_stack([t, level, lat, lon])
-        u = self._interp_u(pt).astype(np.float32)
-        v = self._interp_v(pt).astype(np.float32)
-        w_omega = self._interp_w(pt).astype(np.float32)
-        temp = self._interp_t(pt).astype(np.float32)
-        w = omega_to_w_mps(w_omega, level, temp).astype(np.float32)
+        u, v, w_omega, _temp = np.moveaxis(self._interp(pt).astype(np.float32), -1, 0)
+        w = omega_to_w_mps(w_omega, level, _temp).astype(np.float32)
         return np.stack([u, v, w], axis=-1)
 
     def close(self) -> None:

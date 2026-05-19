@@ -26,6 +26,20 @@ def altitude_to_pressure_hpa(height_m: np.ndarray) -> np.ndarray:
     return np.asarray(p0 * np.power(np.float32(1.0) - (L * height) / T0, exponent), dtype=np.float32)
 
 
+def altitude_to_pressure_hpa_scalar(height_m: float) -> float:
+    """Scalar-версия `altitude_to_pressure_hpa` для hot path (одна точка)."""
+    p0 = 1013.25
+    t0 = 288.15
+    g = 9.80665
+    l = 0.0065
+    r = 8.31447
+    m = 0.0289644
+    max_height = (t0 / l) - 1e-6
+    height = max(0.0, min(float(height_m), max_height))
+    exponent = (g * m) / (r * l)
+    return p0 * (1.0 - (l * height) / t0) ** exponent
+
+
 def pressure_hpa_to_altitude_m(pressure_hpa: np.ndarray) -> np.ndarray:
     """Высота (м) по давлению (гПа), обратная к `altitude_to_pressure_hpa` в диапазоне ISA."""
     p0 = np.float32(1013.25)

@@ -37,15 +37,9 @@ _LAT_DIM = "latitude"
 _LEVEL_DIM = "pressure_level"
 _TIME_DIM = "valid_time"
 
-
-
-def _dipole_colorscale_default() -> list[list[float | str]]:
-    """Тёмная сторона шкалы соответствует концам проекции → −1, светлая — +1 (на тёмном фоне)."""
-    return [
-        [0.0, "rgb(35,54,93)"],
-        [0.5, "rgb(140,157,177)"],
-        [1.0, "rgb(228,237,246)"],
-    ]
+# Последовательные perceptually-uniform палитры Plotly (семейство Viridis): хорошо читаются
+# на тёмном фоне; здесь кодирование связано с длиной конуса и проекцией направления −1 … +1.
+DEFAULT_CONE_DIRECTION_COLORSCALE = "Plasma"
 
 
 def _dipole_proj_units(u: np.ndarray, v: np.ndarray, *, plane: str) -> np.ndarray:
@@ -302,8 +296,10 @@ def build_wind_figure(
 
     Конусы (Cone) кодируют:
       • Направление острия  → направление ветра (u, v, w·w_scale).
-      • Цвет               → дивергентная шкала по проекции на выбранную ось безразмерным **u / |Vₕ|** или **v / |Vₕ|**
-                             (минус конец шкалы — одно крайнее направление, плюс — противоположное). Шкала и подпись colorbar совпадают.
+      • Цвет               → Plotly задаёт его по модулю отображаемого вектора после модуляции амплитудой
+                             от безразмерного **u / |Vₕ|** или **v / |Vₕ|** (−1 … +1), поэтому вместе с длиной
+                             конуса кодирует «полюса» направления; палитра по умолчанию последовательная **Plasma**
+                             (доступны Viridis, Inferno, Turbo, … или свой список цветов). Подпись colorbar совпадает со шкалой.
       • Размер (слабо)     → скорость (mag) умножается на множитель от этого же скаляра: Plotly раскрашивает только по ‖V‖,
                              поэтому длины конусов слегва меняются вместе с цветом; штиль — отдельно, серым.
       • Tooltip            → u, v, w (реальные), скорость, давление, высота, скаляр для шкалы.
@@ -318,8 +314,8 @@ def build_wind_figure(
         w_scale:      масштаб вертикальной компоненты для наглядности.
         cone_sizeref: общий масштаб размера конусов Plotly; меньше значение = больше конусы.
         direction_plane: **east** (ось W→E, u / |Vₕ|) или **north** (ось S→N, v / |Vₕ|).
-        cone_direction_colorscale: имя палитры Plotly («RdBu», «PuOr», …) или свой список [[0,color],[1,color],…];
-                                  по умолчанию тёмная — светлая оттенки синего/серого.
+        cone_direction_colorscale: имя палитры Plotly («Plasma», «Viridis», «Inferno», «Magma», «Turbo», …)
+                                  или свой список [[0,color],[1,color],…]; по умолчанию «Plasma».
         cone_direction_reversescale: перевернуть именованную палитру (игнорируется для пользовательского списка цветов).
         cone_dir_amp_lo / cone_dir_amp_hi: насколько множитель длины конусов меняется при скаляре −1 … +1 (0 < lo < hi).
         cone_speed_floor: нижняя граница множителя от нормализованной скорости (узкий разброс длин между точками).
@@ -435,7 +431,7 @@ def build_wind_figure(
         cbar_title = "Направление (ось W→E)<br><sub>u / |V_h| −1 … +1 · запад → восток</sub>"
         dipole_ticktext = ["запад", "0", "восток"]
 
-    cs_raw = cone_direction_colorscale if cone_direction_colorscale is not None else _dipole_colorscale_default()
+    cs_raw = cone_direction_colorscale if cone_direction_colorscale is not None else DEFAULT_CONE_DIRECTION_COLORSCALE
     use_reverse = cone_direction_reversescale and isinstance(cs_raw, str)
 
     def hover_for_indices(idx: np.ndarray) -> list[str]:

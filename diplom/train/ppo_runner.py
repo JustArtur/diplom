@@ -15,6 +15,7 @@ from diplom.envs.balloon_env import BalloonEnv
 from diplom.envs.factory import build_env
 from diplom.torch_device import resolve_torch_device
 from diplom.train.info_logging_callback import InfoLoggingCallback
+from diplom.train.run_dirs import next_run_dir
 from diplom.world import log_world_bounds
 from diplom.wind.factory import build_wind_interpolator
 from diplom.wind.interp import ensure_wind_interpolator_cache
@@ -33,7 +34,7 @@ def _env_factory(
     return build_env(env_config, wind_config, env_idx=env_idx)
 
 
-def _make_vec_env(config: AppConfig) -> Union[DummyVecEnv, SubprocVecEnv]:
+def _make_vec_env(config: AppConfig, *, force_dummy: bool = False) -> Union[DummyVecEnv, SubprocVecEnv]:
     n_envs = max(1, config.training.n_envs)
     ensure_wind_interpolator_cache(config.wind.path)
     # Включаем рандомизацию старта — нужна при обучении.
@@ -42,48 +43,41 @@ def _make_vec_env(config: AppConfig) -> Union[DummyVecEnv, SubprocVecEnv]:
         randomize_start_state=True,
         randomize_start_time=True,
     )
+    factories = [
+        partial(_env_factory, env_config=env_config, wind_config=config.wind, env_idx=env_idx)
+        for env_idx in range(n_envs)
+    ]
     # partial — picklable, в отличие от lambda; именно это позволяет SubprocVecEnv
     # передавать фабрику через pickle в дочерний процесс.
-    if n_envs == 1:
-        # Один процесс — нет смысла в оверхеде IPC.
-        return DummyVecEnv([partial(_env_factory, env_config=env_config, wind_config=config.wind, env_idx=0)])
+    if force_dummy or n_envs == 1:
+        return DummyVecEnv(factories)
 
     # start_method="spawn" безопасен на macOS и Windows (fork может дедлочить
     # внутренние потоки xarray/netCDF4).
-    return SubprocVecEnv(
-        [
-            partial(_env_factory, env_config=env_config, wind_config=config.wind, env_idx=env_idx)
-            for env_idx in range(n_envs)
-        ],
-        start_method="spawn",
-    )
+    return SubprocVecEnv(factories, start_method="spawn")
 
 
-def _next_run_dir(trajectories_root: Path) -> Path:
-    """Вернуть следующую по счёту директорию ppo_NNN внутри trajectories_root.
+def train_ppo(
+    config: AppConfig,
+    callbacks: Sequence[BaseCallback] | None = None,
+    *,
+    force_dummy_vec_env: bool = False,
+    run_dir: Path | None = None,
+) -> Path:
+    """Train PPO agent on the balloon environment.
 
-    Просматривает существующие папки вида ppo_000, ppo_001, … и возвращает
-    ppo_{max+1:03d}. Если папок нет — возвращает ppo_000.
+    Returns:
+        Каталог текущего run-а (``PPO_N`` с подкаталогами ``tb`` и ``trajectories``).
     """
-    existing = sorted(
-        p for p in trajectories_root.glob("ppo_*") if p.is_dir()
-    )
-    if not existing:
-        return trajectories_root / "ppo_000"
-    last_num = int(existing[-1].name.split("_")[-1])
-    return trajectories_root / f"ppo_{last_num + 1:03d}"
-
-
-def train_ppo(config: AppConfig, callbacks: Sequence[BaseCallback] | None = None) -> None:
-    """Train PPO agent on the balloon environment."""
     from diplom.train.trajectory_callback import TrajectoryVisualizationCallback
 
     logdir = config.training.logdir
     logdir.mkdir(parents=True, exist_ok=True)
     device = resolve_torch_device(config.training.device)
+    ppo_verbose = config.training.verbose
     print(f"[train_ppo] Using device={device}")  # noqa: T201
 
-    vec_env = _make_vec_env(config)
+    vec_env = _make_vec_env(config, force_dummy=force_dummy_vec_env)
     eval_env = None
     info_callback = InfoLoggingCallback()
 
@@ -99,11 +93,13 @@ def train_ppo(config: AppConfig, callbacks: Sequence[BaseCallback] | None = None
     finally:
         probe_interp.close()
 
-    traj_dir = _next_run_dir(logdir / "trajectories")
-    traj_callback = TrajectoryVisualizationCallback(
-        output_dir=traj_dir,
-        verbose=1,
-    )
+    if run_dir is None:
+        run_dir = next_run_dir(logdir)
+    else:
+        run_dir.mkdir(parents=True, exist_ok=True)
+    traj_dir = run_dir / "trajectories"
+    print(f"[train_ppo] Run directory: {run_dir}")  # noqa: T201
+    traj_callback = TrajectoryVisualizationCallback(output_dir=traj_dir)
 
     model_path = logdir / "ppo_model.zip"
     model: PPO
@@ -117,6 +113,7 @@ def train_ppo(config: AppConfig, callbacks: Sequence[BaseCallback] | None = None
         if model_path.exists():
             print(f"[train_ppo] Продолжаем обучение из {model_path}")  # noqa: T201
             model = PPO.load(model_path, env=vec_env, device=device)
+            model.tensorboard_log = str(run_dir)
         else:
             model = PPO(
                 policy="MlpPolicy",
@@ -136,17 +133,19 @@ def train_ppo(config: AppConfig, callbacks: Sequence[BaseCallback] | None = None
                 ent_coef=0.005,
                 vf_coef=0.5,
                 max_grad_norm=0.5,
-                verbose=1,
-                tensorboard_log=str(logdir / "tb"),
+                verbose=ppo_verbose,
+                tensorboard_log=str(run_dir),
                 seed=config.training.seed,
                 device=device,
             )
+        model.verbose = ppo_verbose
         extra_callbacks = list(callbacks) if callbacks is not None else []
         try:
             model.learn(
                 total_timesteps=config.training.total_timesteps,
                 callback=CallbackList([info_callback, traj_callback, *extra_callbacks]),
-                reset_num_timesteps=False,
+                reset_num_timesteps=True,
+                tb_log_name="tb",
             )
         except KeyboardInterrupt:
             _save_model()
@@ -171,3 +170,5 @@ def train_ppo(config: AppConfig, callbacks: Sequence[BaseCallback] | None = None
         if eval_env is not None:
             eval_env.close()
         vec_env.close()
+
+    return run_dir

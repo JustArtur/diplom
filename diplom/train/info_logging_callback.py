@@ -2,75 +2,82 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
-from typing import Any
-
-import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
 
 class InfoLoggingCallback(BaseCallback):
-    """Собирает `info` из каждой среды отдельно и пишет агрегаты в логгер PPO.
+    """Собирает выбранные скалярные поля `info` и пишет mean за rollout в TensorBoard.
 
-    PPO сам не выводит содержимое `info`, поэтому мы собираем числовые поля
-    за один rollout по каждой среде и логируем их в stdout и TensorBoard
-    через стандартный logger.
+    PPO сам не выводит содержимое `info`, поэтому callback накапливает только
+    заранее заданный набор ключей и логирует среднее по шагам rollout.
+    В stdout метрики не попадают — только TensorBoard.
     """
 
-    _IGNORED_KEYS = {"terminal_observation", "final_observation"}
+    _KEYS = ("distance_to_target", "progress_reward")
 
     def __init__(self, prefix: str = "env") -> None:
         super().__init__(verbose=0)
         self.prefix = prefix
-        self._values: dict[int, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-        self._samples: dict[int, int] = defaultdict(int)
+        self._n_envs = 0
+        self._samples: list[int] = []
+        self._sums: dict[str, list[float]] = {}
+        self._counts: dict[str, list[int]] = {}
+        self._tag_samples: tuple[str, ...] = ()
+        self._tag_keys: dict[str, tuple[str, ...]] = {}
+
+    def _on_training_start(self) -> None:
+        n = self.training_env.num_envs
+        self._n_envs = n
+        p = self.prefix
+        self._tag_samples = tuple(f"{p}_{i}/samples" for i in range(n))
+        self._tag_keys = {
+            key: tuple(f"{p}_{i}/{key}" for i in range(n))
+            for key in self._KEYS
+        }
+        self._reset_buffers()
 
     def _on_rollout_start(self) -> None:
-        self._values.clear()
-        self._samples.clear()
+        self._reset_buffers()
+
+    def _reset_buffers(self) -> None:
+        n = self._n_envs
+        self._samples = [0] * n
+        self._sums = {key: [0.0] * n for key in self._KEYS}
+        self._counts = {key: [0] * n for key in self._KEYS}
 
     def _on_step(self) -> bool:
-        infos = self.locals.get("infos", [])
+        infos = self.locals["infos"]
+        samples = self._samples
+        sums = self._sums
+        counts = self._counts
         for env_idx, info in enumerate(infos):
-            if isinstance(info, dict):
-                self._collect_info(env_idx, info)
-                self._samples[env_idx] += 1
+            if not info:
+                continue
+            samples[env_idx] += 1
+            for key in self._KEYS:
+                val = info.get(key)
+                if val is not None:
+                    sums[key][env_idx] += val
+                    counts[key][env_idx] += 1
         return True
 
     def _on_rollout_end(self) -> None:
-        if not self._values:
-            return
-
-        for env_idx in sorted(self._values):
-            env_prefix = f"{self.prefix}_{env_idx}"
-            self.logger.record(f"{env_prefix}/samples", self._samples[env_idx])
-            for key, values in sorted(self._values[env_idx].items()):
-                self.logger.record(f"{env_prefix}/{key}", self._aggregate_values(key, values))
-
-    def _collect_info(self, env_idx: int, info: dict[str, Any], path: str = "") -> None:
-        for key, value in info.items():
-            if key in self._IGNORED_KEYS:
+        logger = self.logger
+        tag_samples = self._tag_samples
+        tag_keys = self._tag_keys
+        samples = self._samples
+        sums = self._sums
+        counts = self._counts
+        for env_idx in range(self._n_envs):
+            n_samples = samples[env_idx]
+            if not n_samples:
                 continue
-            name = f"{path}{key}"
-            if isinstance(value, dict):
-                self._collect_info(env_idx, value, f"{name}/")
-                continue
-            for flat_key, flat_value in self._flatten_value(name, value).items():
-                self._values[env_idx][flat_key].append(flat_value)
-
-    def _flatten_value(self, key: str, value: Any) -> dict[str, Any]:
-        if isinstance(value, (bool, int, float, np.integer, np.floating)):
-            return {key: float(value)}
-
-        array = np.asarray(value)
-        if array.ndim == 0 and np.issubdtype(array.dtype, np.number):
-            return {key: float(array.item())}
-
-        if array.ndim >= 1 and np.issubdtype(array.dtype, np.number):
-            flat = array.reshape(-1)
-            return {f"{key}/{idx}": float(item) for idx, item in enumerate(flat)}
-
-        return {}
-
-    def _aggregate_values(self, key: str, values: list[Any]) -> Any:
-        return float(np.mean(values))
+            logger.record(tag_samples[env_idx], n_samples, exclude="stdout")
+            for key in self._KEYS:
+                c = counts[key][env_idx]
+                if c:
+                    logger.record(
+                        tag_keys[key][env_idx],
+                        sums[key][env_idx] / c,
+                        exclude="stdout",
+                    )

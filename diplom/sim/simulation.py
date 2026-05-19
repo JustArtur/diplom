@@ -60,6 +60,7 @@ class Simulation:
         self.energy_spent = np.float32(0.0)
         self.air_density = np.float32(0.0)
         self._warned_world_bounds = False
+        self._wind_buf = np.zeros(3, dtype=np.float32)
 
     def _clamp_time(self) -> None:
         self.sim_time = np.clip(self.sim_time, self.wind_interp.time_min, self.wind_interp.time_max)
@@ -159,15 +160,18 @@ class Simulation:
 
     def _build_result(self, wind: WindSample) -> SimResult:
         """Собрать объект результата из текущего внутреннего состояния."""
+        self._wind_buf[0] = wind.u
+        self._wind_buf[1] = wind.v
+        self._wind_buf[2] = wind.w
         return SimResult(
-            position=np.array(self.position, dtype=np.float32),
-            target_position=np.array(self.target_position, dtype=np.float32),
+            position=self.position,
+            target_position=self.target_position,
             vertical_speed=self.vertical_speed,
             vertical_acceleration=self.vertical_acceleration,
             energy_spent=self.energy_spent,
             air_density=self.air_density,
             air_weight=self.air_weight,
-            wind=np.array([wind.u, wind.v, wind.w], dtype=np.float32),
+            wind=self._wind_buf,
             temperature=wind.temperature,
             pressure=wind.pressure,
         )

@@ -43,6 +43,7 @@ def _build_app_config(
     logdir: Path = DEFAULT_TRAINING_CONFIG.logdir,
     n_envs: int = DEFAULT_TRAINING_CONFIG.n_envs,
     device: str = DEFAULT_TRAINING_CONFIG.device,
+    verbose: int = DEFAULT_TRAINING_CONFIG.verbose,
     target_reach_radius: float = DEFAULT_ENVIRONMENT_CONFIG.target_reach_radius,
     start_time: datetime = datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
 ) -> AppConfig:
@@ -57,6 +58,7 @@ def _build_app_config(
             logdir=logdir,
             n_envs=n_envs,
             device=device,
+            verbose=verbose,
         ),
         visualization=VisualizationConfig(
             window_size=DEFAULT_VISUALIZATION_CONFIG.window_size,
@@ -159,25 +161,204 @@ def train_ppo(
         datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
         help="Базовое время симуляции; в train-эпизодах с рандомизацией будет переопределено.",
     ),
+    in_process: bool = typer.Option(
+        False,
+        "--in-process",
+        help="Одна среда в DummyVecEnv (для profile-ppo-mem/cpu; не использовать в боевом обучении)",
+    ),
+    verbose: int = typer.Option(
+        DEFAULT_TRAINING_CONFIG.verbose,
+        "--verbose",
+        "-v",
+        help="Уровень логирования PPO в консоль (SB3): 0 — тихо, 1 — таблица метрик; env-метрики только в TensorBoard",
+    ),
 ) -> None:
     """Запустить обучение PPO-модели."""
     from diplom.train.ppo_runner import train_ppo as run_train_ppo
+    from diplom.train.profiling import PROFILE_N_ENVS
 
     # Верхний слой задаёт только пользовательские параметры обучения.
     app_config = _build_app_config(
         total_timesteps=total_timesteps,
         seed=seed,
         logdir=logdir,
-        n_envs=n_envs,
+        n_envs=PROFILE_N_ENVS if in_process else n_envs,
+        device=device,
+        verbose=verbose,
+        target_reach_radius=target_reach_radius,
+        start_time=start_time,
+    )
+    try:
+        run_train_ppo(app_config, force_dummy_vec_env=in_process)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+
+# ──────────────────── profile_ppo_mem / profile_ppo_cpu ────────────────────
+
+@app.command("profile-ppo-mem")
+def profile_ppo_mem(
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Файл memray (.bin); по умолчанию <logdir>/PPO_N/memray.bin",
+    ),
+    flamegraph: Optional[Path] = typer.Option(
+        None,
+        "--flamegraph",
+        help="HTML flame graph; по умолчанию <logdir>/PPO_N/memray.html",
+    ),
+    no_flamegraph: bool = typer.Option(
+        False,
+        "--no-flamegraph",
+        help="Не строить HTML, только .bin и таблицу в терминале",
+    ),
+    no_table: bool = typer.Option(
+        False,
+        "--no-table",
+        help="Не выводить memray table в терминал",
+    ),
+    native: bool = typer.Option(
+        False,
+        "--native",
+        help="native_traces: стек C-расширений (PyTorch, NumPy); профиль тяжелее",
+    ),
+    total_timesteps: int = typer.Option(
+        DEFAULT_TRAINING_CONFIG.total_timesteps,
+        "--timesteps",
+        "-t",
+        help="Количество шагов обучения (как у train-ppo)",
+    ),
+    seed: int = typer.Option(DEFAULT_TRAINING_CONFIG.seed, "--seed", help="Seed"),
+    logdir: Path = typer.Option(
+        DEFAULT_TRAINING_CONFIG.profile_logdir,
+        "--logdir",
+        "-l",
+        help="Каталог run-ов обучения (PPO_N/tb, PPO_N/trajectories)",
+    ),
+    device: str = typer.Option(
+        DEFAULT_TRAINING_CONFIG.device,
+        "--device",
+        "-d",
+        help="Устройство PPO: cpu, cuda, mps",
+        case_sensitive=False,
+    ),
+    target_reach_radius: float = typer.Option(
+        DEFAULT_ENVIRONMENT_CONFIG.target_reach_radius,
+        "--target-radius",
+        help="Радиус успешного завершения эпизода",
+    ),
+    start_time: datetime = typer.Option(
+        datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
+        help="Базовое время симуляции",
+    ),
+) -> None:
+    """Профиль памяти при обучении PPO (memray): одна среда, один процесс.
+
+    CPU (время): diplom profile-ppo-cpu. Запускайте отдельно — совмещение сильно замедляет прогон.
+
+    Установка: poetry install --with dev
+
+    \b
+      diplom profile-ppo-mem -t 50000
+      diplom profile-ppo-mem -t 50000 --native
+      open runs/profile_ppo/PPO_0/memray.html
+    """
+    from diplom.train.profiling import PROFILE_N_ENVS, MemrayNotFoundError, run_memray_train
+
+    app_config = _build_app_config(
+        total_timesteps=total_timesteps,
+        seed=seed,
+        logdir=logdir,
+        n_envs=PROFILE_N_ENVS,
         device=device,
         target_reach_radius=target_reach_radius,
         start_time=start_time,
     )
     try:
-        run_train_ppo(app_config)
+        bin_path, html_path = run_memray_train(
+            app_config,
+            output=output,
+            flamegraph=flamegraph,
+            skip_flamegraph=no_flamegraph,
+            native_traces=native,
+            print_table=not no_table,
+        )
+    except MemrayNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Run: {bin_path.parent}")
+    if html_path is not None:
+        typer.echo(f"Flame graph: {html_path}")
+
+
+@app.command("profile-ppo-cpu")
+def profile_ppo_cpu(
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Файл cProfile; по умолчанию <logdir>/PPO_N/profile.prof",
+    ),
+    top_lines: int = typer.Option(40, "--top", help="Сколько строк вывести в таблице"),
+    total_timesteps: int = typer.Option(
+        DEFAULT_TRAINING_CONFIG.total_timesteps,
+        "--timesteps",
+        "-t",
+    ),
+    seed: int = typer.Option(DEFAULT_TRAINING_CONFIG.seed, "--seed"),
+    logdir: Path = typer.Option(
+        DEFAULT_TRAINING_CONFIG.profile_logdir,
+        "--logdir",
+        "-l",
+        help="Каталог run-ов обучения (PPO_N/tb, PPO_N/trajectories)",
+    ),
+    device: str = typer.Option(
+        DEFAULT_TRAINING_CONFIG.device,
+        "--device",
+        "-d",
+        case_sensitive=False,
+    ),
+    target_reach_radius: float = typer.Option(
+        DEFAULT_ENVIRONMENT_CONFIG.target_reach_radius,
+        "--target-radius",
+    ),
+    start_time: datetime = typer.Option(
+        datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
+    ),
+) -> None:
+    """Профиль CPU (cProfile): одна среда, один процесс.
+
+    Память: diplom profile-ppo-mem (memray). Запускайте отдельно от profile-ppo-cpu.
+
+    \b
+      diplom profile-ppo-cpu -t 50000
+      snakeviz runs/profile_ppo/PPO_0/profile.prof
+    """
+    from diplom.train.profiling import PROFILE_N_ENVS, run_cprofile_train
+
+    app_config = _build_app_config(
+        total_timesteps=total_timesteps,
+        seed=seed,
+        logdir=logdir,
+        n_envs=PROFILE_N_ENVS,
+        device=device,
+        target_reach_radius=target_reach_radius,
+        start_time=start_time,
+    )
+    try:
+        prof_path = run_cprofile_train(app_config, output=output, top_lines=top_lines)
+        typer.echo(f"Run: {prof_path.parent}")
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
 
 # ──────────────────── rollout ────────────────────
 
