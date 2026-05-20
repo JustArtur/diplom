@@ -301,6 +301,34 @@ def save_figure(fig: go.Figure, path: Path) -> None:
 
 # ──────────────────── Построение траектории ────────────────────
 
+def _wind_horizontal_speed(wind: object) -> float:
+    if not isinstance(wind, (list, tuple, np.ndarray)) or len(wind) < 2:
+        return 0.0
+    return float(np.hypot(float(wind[0]), float(wind[1])))
+
+
+def _format_step_hover(step: dict, step_idx: int, *, title: str | None = None) -> str:
+    pos = step["position"]
+    dist = float(step.get("distance_to_target", 0.0))
+    sim_time = step.get("sim_time", "—")
+    wind_speed = _wind_horizontal_speed(step.get("wind"))
+    vertical_speed = float(step.get("vertical_speed", 0.0))
+    reward = float(step.get("reward", 0.0))
+    action = float(step.get("action", 0.0))
+    lines = [
+        title or f"шаг {step_idx}",
+        f"Позиция: ({pos[0]:.0f}, {pos[1]:.0f}) м",
+        f"Высота: {pos[2]:.0f} м",
+        f"До цели: {dist:.1f} м",
+        f"Время сим.: {sim_time}",
+        f"Скорость шара (верт.): {vertical_speed:.2f} м/с",
+        f"Ветер (гориз.): {wind_speed:.1f} м/с",
+        f"reward={reward:.3f}",
+        f"действие={action:.3f}",
+    ]
+    return "<br>".join(lines)
+
+
 def build_episode_traces(episode: EpisodeVizData) -> List[go.BaseTraceType]:
     if not episode.steps:
         return []
@@ -313,16 +341,7 @@ def build_episode_traces(episode: EpisodeVizData) -> List[go.BaseTraceType]:
     name = episode.label or f"env_{episode.env_idx}"
     group = f"ep_{episode.env_idx}_{id(episode)}"
 
-    rewards = np.fromiter(
-        (float(s.get("reward", 0.0)) for s in episode.steps), dtype=np.float32, count=n,
-    )
-    actions = np.fromiter(
-        (float(s.get("action", 0.0)) for s in episode.steps), dtype=np.float32, count=n,
-    )
-    distances = np.fromiter(
-        (float(s.get("distance_to_target", 0.0)) for s in episode.steps), dtype=np.float32, count=n,
-    )
-    customdata = np.column_stack((rewards, actions, distances))
+    hover_text = [_format_step_hover(step, idx) for idx, step in enumerate(episode.steps)]
 
     progress = np.linspace(0, 1, n, dtype=np.float32)
     line_colorscale = [[0.0, "rgba(180,180,180,0.35)"], [1.0, color]]
@@ -333,15 +352,8 @@ def build_episode_traces(episode: EpisodeVizData) -> List[go.BaseTraceType]:
             mode="lines",
             name=name,
             line=dict(color=progress, colorscale=line_colorscale, width=4),
-            customdata=customdata,
-            hovertemplate=(
-                "шаг %{pointNumber}<br>"
-                "x=%{x:.0f} м, y=%{y:.0f} м, z=%{z:.0f} м<br>"
-                "reward=%{customdata[0]:.3f}<br>"
-                "действие=%{customdata[1]:.3f}<br>"
-                "dist=%{customdata[2]:.1f} м"
-                "<extra></extra>"
-            ),
+            text=hover_text,
+            hovertemplate="%{text}<extra></extra>",
             legendgroup=group,
         ),
         go.Scatter3d(
@@ -350,10 +362,8 @@ def build_episode_traces(episode: EpisodeVizData) -> List[go.BaseTraceType]:
             name=f"{name} · старт",
             marker=dict(color="lime", size=8, symbol="diamond",
                         line=dict(color="black", width=1)),
-            hovertemplate=(
-                f"{name} — старт<br>x={x[0]:.0f} м, y={y[0]:.0f} м, z={z[0]:.0f} м"
-                "<extra></extra>"
-            ),
+            text=[_format_step_hover(episode.steps[0], 0, title=f"{name} — старт")],
+            hovertemplate="%{text}<extra></extra>",
             legendgroup=group,
             showlegend=False,
         ),
@@ -383,11 +393,17 @@ def build_episode_traces(episode: EpisodeVizData) -> List[go.BaseTraceType]:
                 size=7, symbol="circle",
                 line=dict(color="black", width=1),
             ),
-            hovertemplate=(
-                f"{name} — {'успех ✓' if episode.steps[-1].get('terminated') else 'truncated'}<br>"
-                f"x={x[-1]:.0f} м, y={y[-1]:.0f} м, z={z[-1]:.0f} м"
-                "<extra></extra>"
-            ),
+            text=[
+                _format_step_hover(
+                    episode.steps[-1],
+                    n - 1,
+                    title=(
+                        f"{name} — "
+                        f"{'успех ✓' if episode.steps[-1].get('terminated') else 'truncated'}"
+                    ),
+                )
+            ],
+            hovertemplate="%{text}<extra></extra>",
             legendgroup=group,
             showlegend=False,
         ),

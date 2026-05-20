@@ -91,6 +91,9 @@ _VIZ_STEP_KEYS = frozenset({
     "distance_to_target",
     "terminated",
     "target_position",
+    "sim_time",
+    "wind",
+    "vertical_speed",
 })
 
 

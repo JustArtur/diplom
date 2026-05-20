@@ -434,21 +434,21 @@ class WindInterpolator:
         lat = np.clip(raw_lat, self._lat_min, self._lat_max)
         lon = np.clip(raw_lon, self._lon_min, self._lon_max)
 
-        if not self._warned_dataset_bounds and (
-            np.any(raw_lat != lat) or np.any(raw_lon != lon)
-        ):
-            self._warned_dataset_bounds = True
-            env_label = f"env_{self.env_idx:03d}" if self.env_idx is not None else "env"
-            warnings.warn(
-                (
-                    f"[{env_label}] Позиция аэростата вышла за границы ERA5-датасета; "
-                    "координаты будут клампиться к доступному диапазону "
-                    f"lat=[{self._lat_min:.3f}, {self._lat_max:.3f}], "
-                    f"lon=[{self._lon_min:.3f}, {self._lon_max:.3f}]."
-                ),
-                RuntimeWarning,
-                stacklevel=3,
-            )
+        # if not self._warned_dataset_bounds and (
+        #     np.any(raw_lat != lat) or np.any(raw_lon != lon)
+        # ):
+        #     self._warned_dataset_bounds = True
+        #     env_label = f"env_{self.env_idx:03d}" if self.env_idx is not None else "env"
+        #     warnings.warn(
+        #         (
+        #             f"[{env_label}] Позиция аэростата вышла за границы ERA5-датасета; "
+        #             "координаты будут клампиться к доступному диапазону "
+        #             f"lat=[{self._lat_min:.3f}, {self._lat_max:.3f}], "
+        #             f"lon=[{self._lon_min:.3f}, {self._lon_max:.3f}]."
+        #         ),
+        #         RuntimeWarning,
+        #         stacklevel=3,
+        #     )
 
         return lat.astype(np.float64), lon.astype(np.float64)
 
@@ -459,19 +459,19 @@ class WindInterpolator:
         lat = min(max(raw_lat, self._lat_min), self._lat_max)
         lon = min(max(raw_lon, self._lon_min), self._lon_max)
 
-        if not self._warned_dataset_bounds and (raw_lat != lat or raw_lon != lon):
-            self._warned_dataset_bounds = True
-            env_label = f"env_{self.env_idx:03d}" if self.env_idx is not None else "env"
-            warnings.warn(
-                (
-                    f"[{env_label}] Позиция аэростата вышла за границы ERA5-датасета; "
-                    "координаты будут клампиться к доступному диапазону "
-                    f"lat=[{self._lat_min:.3f}, {self._lat_max:.3f}], "
-                    f"lon=[{self._lon_min:.3f}, {self._lon_max:.3f}]."
-                ),
-                RuntimeWarning,
-                stacklevel=3,
-            )
+        # if not self._warned_dataset_bounds and (raw_lat != lat or raw_lon != lon):
+        #     self._warned_dataset_bounds = True
+        #     env_label = f"env_{self.env_idx:03d}" if self.env_idx is not None else "env"
+        #     warnings.warn(
+        #         (
+        #             f"[{env_label}] Позиция аэростата вышла за границы ERA5-датасета; "
+        #             "координаты будут клампиться к доступному диапазону "
+        #             f"lat=[{self._lat_min:.3f}, {self._lat_max:.3f}], "
+        #             f"lon=[{self._lon_min:.3f}, {self._lon_max:.3f}]."
+        #         ),
+        #         RuntimeWarning,
+        #         stacklevel=3,
+        #     )
 
         return lat, lon
 

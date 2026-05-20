@@ -9,15 +9,21 @@
   load_wind_slice(path, time_target)       → WindSlice
   build_wind_figure(slice_, **opts)        → go.Figure
   save_figure(fig, path)                   → standalone HTML
+
+Пакетная отрисовка всех датасетов из ``data/`` — команда CLI ``diplom wind-viz``.
 """
 
 from __future__ import annotations
 
+import colorsys
+import re
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import numpy as np
+import plotly.colors as pc
 import plotly.graph_objects as go
 import xarray as xr
 from scipy.interpolate import interp1d
@@ -37,25 +43,97 @@ _LAT_DIM = "latitude"
 _LEVEL_DIM = "pressure_level"
 _TIME_DIM = "valid_time"
 
-# Последовательные perceptually-uniform палитры Plotly (семейство Viridis): хорошо читаются
-# на тёмном фоне; здесь кодирование связано с длиной конуса и проекцией направления −1 … +1.
-DEFAULT_CONE_DIRECTION_COLORSCALE = "Plasma"
+# Циклическая HSL-палитра по азимуту: 0° и 360° совпадают, противоположные направления контрастны.
+DEFAULT_CONE_AZIMUTH_COLORSCALE: list[list[float | str]] = [
+    [0.0, "hsl(0, 82%, 58%)"],
+    [0.125, "hsl(45, 82%, 58%)"],
+    [0.25, "hsl(90, 82%, 58%)"],
+    [0.375, "hsl(135, 82%, 58%)"],
+    [0.5, "hsl(180, 82%, 58%)"],
+    [0.625, "hsl(225, 82%, 58%)"],
+    [0.75, "hsl(270, 82%, 58%)"],
+    [0.875, "hsl(315, 82%, 58%)"],
+    [1.0, "hsl(0, 82%, 58%)"],
+]
+
+# Число секторов по азимуту: Plotly Cone красит только по ‖V‖, поэтому каждый сектор — flat colorscale.
+CONE_AZIMUTH_BINS = 36
 
 
-def _dipole_proj_units(u: np.ndarray, v: np.ndarray, *, plane: str) -> np.ndarray:
-    """Доля компоненты u или v в горизонтальной скорости; при почти штиле → 0."""
-    uu = np.asarray(u, dtype=np.float64)
-    vv = np.asarray(v, dtype=np.float64)
-    sh = np.hypot(uu, vv)
-    sh_safe = np.maximum(sh, 1e-9)
-    p = plane.lower().strip()
-    if p == "east":
-        c = uu / sh_safe
-    elif p == "north":
-        c = vv / sh_safe
+def _horizontal_azimuth_deg_east_north(u: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """Горизонтальный азимут ветра: 0° = E, 90° = N, диапазон [0, 360)."""
+    return np.mod(np.degrees(np.arctan2(np.asarray(v, dtype=np.float64), np.asarray(u, dtype=np.float64))), 360.0)
+
+
+def _parse_hsl(color: str) -> tuple[float, float, float]:
+    match = re.match(r"hsl\(\s*([0-9.]+)\s*,\s*([0-9.]+)%\s*,\s*([0-9.]+)%\s*\)", color.strip())
+    if match is None:
+        raise ValueError(f"Ожидался hsl(...), получено {color!r}.")
+    h, s_pct, l_pct = match.groups()
+    return float(h), float(s_pct) / 100.0, float(l_pct) / 100.0
+
+
+def _hsl_to_rgb_str(h: float, s: float, lightness: float) -> str:
+    r, g, b = colorsys.hls_to_rgb((h % 360.0) / 360.0, lightness, s)
+    return f"rgb({int(round(r * 255))},{int(round(g * 255))},{int(round(b * 255))})"
+
+
+def _interp_hsl(a: tuple[float, float, float], b: tuple[float, float, float], frac: float) -> str:
+    h0, s0, l0 = a
+    h1, s1, l1 = b
+    dh = h1 - h0
+    if dh > 180.0:
+        dh -= 360.0
+    elif dh < -180.0:
+        dh += 360.0
+    h = h0 + dh * frac
+    s = s0 + (s1 - s0) * frac
+    lightness = l0 + (l1 - l0) * frac
+    return _hsl_to_rgb_str(h, s, lightness)
+
+
+def _sample_azimuth_color(
+    colorscale: str | list[list[float | str]],
+    azimuth_deg: float,
+    *,
+    reversescale: bool,
+) -> str:
+    t = float(np.mod(azimuth_deg, 360.0)) / 360.0
+    if reversescale:
+        t = 1.0 - t
+    if isinstance(colorscale, str):
+        return pc.sample_colorscale(colorscale, [t])[0]
+    stops = sorted(colorscale, key=lambda item: float(item[0]))
+    if not stops:
+        raise ValueError("colorscale не должен быть пустым.")
+    if t <= float(stops[0][0]):
+        color = str(stops[0][1])
+    elif t >= float(stops[-1][0]):
+        color = str(stops[-1][1])
     else:
-        raise ValueError(f"direction_plane должен быть 'east' или 'north', получено {plane!r}.")
-    return np.clip(np.where(sh < 1e-10, 0.0, c), -1.0, 1.0)
+        color = str(stops[-1][1])
+        for left, right in zip(stops, stops[1:]):
+            p0, c0 = float(left[0]), str(left[1])
+            p1, c1 = float(right[0]), str(right[1])
+            if p0 <= t <= p1:
+                frac = (t - p0) / (p1 - p0) if p1 > p0 else 0.0
+                if c0.startswith("hsl(") and c1.startswith("hsl("):
+                    color = _interp_hsl(_parse_hsl(c0), _parse_hsl(c1), frac)
+                else:
+                    color = pc.find_intermediate_color(c0, c1, frac)
+                break
+    return color
+
+
+def _flat_colorscale_for_azimuth(
+    azimuth_deg: float,
+    colorscale: str | list[list[float | str]],
+    *,
+    reversescale: bool,
+) -> list[list[float | str]]:
+    """Flat colorscale для одного конуса: цвет по азимуту, длина вектора — только скорость."""
+    rgb = _sample_azimuth_color(colorscale, azimuth_deg, reversescale=reversescale)
+    return [[0.0, rgb], [1.0, rgb]]
 
 
 def _compressed_speed_mag(
@@ -280,11 +358,8 @@ def build_wind_figure(
     stride_altitude_m: float = 500.0,
     w_scale: float = 0.0,
     cone_sizeref: float = 20,
-    direction_plane: str = "east",
-    cone_direction_colorscale: Optional[str | list[list[float | str]]] = None,
-    cone_direction_reversescale: bool = False,
-    cone_dir_amp_lo: float = 0.22,
-    cone_dir_amp_hi: float = 1.0,
+    cone_azimuth_colorscale: Optional[str | list[list[float | str]]] = None,
+    cone_azimuth_reversescale: bool = False,
     cone_speed_floor: float = 0.38,
     cone_speed_power: float = 0.42,
     calm_speed_mps: float = 0.12,
@@ -296,13 +371,11 @@ def build_wind_figure(
 
     Конусы (Cone) кодируют:
       • Направление острия  → направление ветра (u, v, w·w_scale).
-      • Цвет               → Plotly задаёт его по модулю отображаемого вектора после модуляции амплитудой
-                             от безразмерного **u / |Vₕ|** или **v / |Vₕ|** (−1 … +1), поэтому вместе с длиной
-                             конуса кодирует «полюса» направления; палитра по умолчанию последовательная **Plasma**
-                             (доступны Viridis, Inferno, Turbo, … или свой список цветов). Подпись colorbar совпадает со шкалой.
-      • Размер (слабо)     → скорость (mag) умножается на множитель от этого же скаляра: Plotly раскрашивает только по ‖V‖,
-                             поэтому длины конусов слегва меняются вместе с цветом; штиль — отдельно, серым.
-      • Tooltip            → u, v, w (реальные), скорость, давление, высота, скаляр для шкалы.
+      • Цвет               → горизонтальный азимут **arctan2(v, u)** в градусах (0° = E, 90° = N) с
+                             **циклической** палитрой: близкие направления (напр. 350° и 30°) дают близкий цвет,
+                             противоположные (≈180°) — максимально различный.
+      • Размер (слабо)     → горизонтальная скорость через сжатый множитель `cone_speed_*`; штиль — отдельно, серым.
+      • Tooltip            → u, v, w (реальные), скорость, давление, высота, азимут.
 
     Args:
         slice_:       срез ERA5, полученный через `load_wind_slice`.
@@ -313,11 +386,9 @@ def build_wind_figure(
                            Поля u, v, w линейно интерполируются между исходными уровнями ERA5 по высоте.
         w_scale:      масштаб вертикальной компоненты для наглядности.
         cone_sizeref: общий масштаб размера конусов Plotly; меньше значение = больше конусы.
-        direction_plane: **east** (ось W→E, u / |Vₕ|) или **north** (ось S→N, v / |Vₕ|).
-        cone_direction_colorscale: имя палитры Plotly («Plasma», «Viridis», «Inferno», «Magma», «Turbo», …)
-                                  или свой список [[0,color],[1,color],…]; по умолчанию «Plasma».
-        cone_direction_reversescale: перевернуть именованную палитру (игнорируется для пользовательского списка цветов).
-        cone_dir_amp_lo / cone_dir_amp_hi: насколько множитель длины конусов меняется при скаляре −1 … +1 (0 < lo < hi).
+        cone_azimuth_colorscale: циклическая палитра [[0,color],…,[1,color]] или имя Plotly; по умолчанию HSL-колесо.
+                                   Для азимута нужна палитра, где первый и последний цвет совпадают.
+        cone_azimuth_reversescale: перевернуть именованную палитру (игнорируется для пользовательского списка).
         cone_speed_floor: нижняя граница множителя от нормализованной скорости (узкий разброс длин между точками).
         cone_speed_power: степень нормализованной горизонтальной скорости для этого множителя.
         calm_speed_mps: |V_h| ниже порога → серый отдельный trace (штиль).
@@ -377,7 +448,7 @@ def build_wind_figure(
 
     z_values = alt_3d / 1000.0 if altitude_unit == "km" else alt_3d
 
-    # ── Вектора для Cone: цвет = ‖V‖; подбираем длину так, чтобы ‖V‖ росло с дипольным скаляром ─────────
+    # ── Вектора для Cone: цвет = азимут; длина ≈ скорость ─────────
     x_arr = np.asarray(x_3d.ravel(), dtype=np.float64)
     y_arr = np.asarray(y_3d.ravel(), dtype=np.float64)
     z_arr = np.asarray(z_values.ravel(), dtype=np.float64)
@@ -406,41 +477,26 @@ def build_wind_figure(
 
     calm = speed_flat < float(calm_speed_mps)
     active = ~calm
-    plane_clean = direction_plane.strip().lower()
-    dipole_flat = np.zeros(n_pts, dtype=np.float64)
-    if np.any(active):
-        dipole_flat[active] = _dipole_proj_units(u_arr[active], v_arr[active], plane=plane_clean)
+    azimuth_deg = _horizontal_azimuth_deg_east_north(u_arr, v_arr)
 
-    amp_lo = float(cone_dir_amp_lo)
-    amp_hi = float(cone_dir_amp_hi)
-    if not (0.0 < amp_lo < amp_hi):
-        raise ValueError("Нужно 0 < cone_dir_amp_lo < cone_dir_amp_hi.")
-    dir_amp = amp_lo + (amp_hi - amp_lo) * (dipole_flat + 1.0) * 0.5
-    scale_amp = ref_speed * mag * dir_amp
+    scale_amp = ref_speed * mag
     east = ux * scale_amp
     north = vy * scale_amp
     up = wz * scale_amp
 
-    theta = np.arctan2(v_arr, u_arr)
+    azimuth_tickvals = [0.0, 90.0, 180.0, 270.0]
+    azimuth_ticktext = ["E (0°)", "N (90°)", "W (180°)", "S (270°)"]
+    cbar_title = "Направление ветра (азимут)<br><sub>0° = E, 90° = N · горизонтальное</sub>"
 
-    dipole_tickvals = [-1.0, 0.0, 1.0]
-    if plane_clean == "north":
-        cbar_title = "Направление (ось S→N)<br><sub>v / |V_h| −1 … +1 · юг → север</sub>"
-        dipole_ticktext = ["юг", "0", "север"]
-    else:
-        cbar_title = "Направление (ось W→E)<br><sub>u / |V_h| −1 … +1 · запад → восток</sub>"
-        dipole_ticktext = ["запад", "0", "восток"]
-
-    cs_raw = cone_direction_colorscale if cone_direction_colorscale is not None else DEFAULT_CONE_DIRECTION_COLORSCALE
-    use_reverse = cone_direction_reversescale and isinstance(cs_raw, str)
+    cs_raw = cone_azimuth_colorscale if cone_azimuth_colorscale is not None else DEFAULT_CONE_AZIMUTH_COLORSCALE
+    use_reverse = cone_azimuth_reversescale and isinstance(cs_raw, str)
 
     def hover_for_indices(idx: np.ndarray) -> list[str]:
         out: list[str] = []
         for i in idx:
             ii = int(i)
             spd = float(speed_flat[ii])
-            compass_deg = np.degrees(theta[ii]) % 360.0
-            dpl = float(dipole_flat[ii])
+            compass_deg = float(azimuth_deg[ii])
             out.append(
                 f"<b>x={x_arr[ii]:.0f} м, y={y_arr[ii]:.0f} м</b><br>"
                 f"Опорная точка: lon={origin_lon:.2f}°, lat={origin_lat:.2f}°<br>"
@@ -451,7 +507,6 @@ def build_wind_figure(
                 f"<b>w = {w_real[ii]:.4f} м/с</b> (↑+)<br>"
                 f"<b>|V_h| = {spd:.2f} м/с</b><br>"
                 f"<b>Гориз. азимут ≈ {compass_deg:.0f}°</b> (0°=E, 90°=N)<br>"
-                f"<b>Шкала направления ≈ {dpl:+.2f}</b> (−1…+1)<br>"
             )
         return out
 
@@ -495,25 +550,38 @@ def build_wind_figure(
 
     idx_act = np.flatnonzero(active)
     if idx_act.size > 0:
-        fig.add_trace(
-            go.Cone(
-                x=x_arr[idx_act].tolist(),
-                y=y_arr[idx_act].tolist(),
-                z=z_arr[idx_act].tolist(),
-                u=east[idx_act].tolist(),
-                v=north[idx_act].tolist(),
-                w=up[idx_act].tolist(),
-                colorscale=cs_raw,
+        bin_width = 360.0 / float(CONE_AZIMUTH_BINS)
+        azimuth_bins = (np.floor(azimuth_deg / bin_width).astype(np.intp)) % CONE_AZIMUTH_BINS
+        for bin_idx in range(CONE_AZIMUTH_BINS):
+            sel = idx_act[azimuth_bins[idx_act] == bin_idx]
+            if sel.size == 0:
+                continue
+            bin_azimuth = (bin_idx + 0.5) * bin_width
+            flat_cs = _flat_colorscale_for_azimuth(
+                bin_azimuth,
+                cs_raw,
                 reversescale=use_reverse,
-                sizemode="absolute",
-                sizeref=float(cone_sizeref),
-                anchor="tail",
-                hovertemplate="%{text}<extra></extra>",
-                text=hover_for_indices(idx_act),
-                showlegend=False,
-                showscale=False,
             )
-        )
+            fig.add_trace(
+                go.Cone(
+                    x=x_arr[sel].tolist(),
+                    y=y_arr[sel].tolist(),
+                    z=z_arr[sel].tolist(),
+                    u=east[sel].tolist(),
+                    v=north[sel].tolist(),
+                    w=up[sel].tolist(),
+                    colorscale=flat_cs,
+                    cmin=0.0,
+                    cmax=1.0,
+                    sizemode="absolute",
+                    sizeref=float(cone_sizeref),
+                    anchor="tail",
+                    hovertemplate="%{text}<extra></extra>",
+                    text=hover_for_indices(sel),
+                    showlegend=False,
+                    showscale=False,
+                )
+            )
         xd = float(x_scene_range[1]) - float(x_scene_range[0])
         yd = float(y_scene_range[1]) - float(y_scene_range[0])
         zd = float(z_scene_range[1]) - float(z_scene_range[0])
@@ -523,17 +591,17 @@ def build_wind_figure(
         z0 = float(z_scene_range[0])
         fig.add_trace(
             go.Scatter3d(
-                x=[x0, x0 + eps, x0 + 2 * eps],
-                y=[y0, y0, y0],
-                z=[z0, z0, z0],
+                x=[x0, x0 + eps, x0 + 2 * eps, x0 + 3 * eps],
+                y=[y0, y0, y0, y0],
+                z=[z0, z0, z0, z0],
                 mode="markers",
                 marker=dict(
-                    color=dipole_tickvals,
-                    cmin=-1,
-                    cmax=1,
+                    color=azimuth_tickvals,
+                    cmin=0.0,
+                    cmax=360.0,
                     colorscale=cs_raw,
                     reversescale=use_reverse,
-                    size=np.full(3, 2.2),
+                    size=np.full(4, 2.2),
                     opacity=0,
                     showscale=True,
                     colorbar=dict(
@@ -542,8 +610,8 @@ def build_wind_figure(
                             side="right",
                             font=dict(color="#e9ecf5", size=12),
                         ),
-                        tickvals=dipole_tickvals,
-                        ticktext=dipole_ticktext,
+                        tickvals=azimuth_tickvals,
+                        ticktext=azimuth_ticktext,
                         len=0.65,
                         thickness=16,
                         outlinewidth=0,
@@ -601,3 +669,131 @@ def save_figure(fig: go.Figure, path: Path) -> None:
     """Сохранить фигуру как standalone HTML (Plotly CDN, без встроенного JS)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.write_html(str(path), include_plotlyjs="cdn")
+
+
+# ──────────────────── Пакетная отрисовка (процессы) ────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class WindPlotRenderJob:
+    """Задание на построение одного HTML-графика (picklable для ProcessPool)."""
+
+    dataset_path: Path
+    output_dir: Path
+    time_ns: int | None  # np.datetime64[ns]; None — первый шаг датасета
+    stride_lon: int
+    stride_lat: int
+    stride_altitude_m: float
+    w_scale: float
+
+
+@dataclass(frozen=True, slots=True)
+class WindPlotRenderResult:
+    dataset_name: str
+    plot_path: Path | None
+    saved: bool
+    log_lines: tuple[str, ...]
+    error: str | None = None
+
+
+def render_wind_plot_job(job: WindPlotRenderJob) -> WindPlotRenderResult:
+    """Построить и сохранить график для одного датасета (отдельный процесс)."""
+    from diplom.data.era5_paths import era5_dataset_title, wind_plot_html_path
+    from diplom.world import world_bounds_from_axes
+
+    name = job.dataset_path.name
+    plot_path = wind_plot_html_path(job.dataset_path, job.output_dir)
+    logs: list[str] = []
+
+    if plot_path.exists():
+        return WindPlotRenderResult(
+            dataset_name=name,
+            plot_path=plot_path,
+            saved=False,
+            log_lines=(f"Пропуск {name}: график уже есть → {plot_path}",),
+        )
+
+    try:
+        if job.time_ns is None:
+            available = list_available_times(job.dataset_path)
+            if not available:
+                return WindPlotRenderResult(
+                    dataset_name=name,
+                    plot_path=None,
+                    saved=False,
+                    log_lines=(),
+                    error=f"{name}: нет временны́х шагов.",
+                )
+            target_time = available[0]
+            logs.append(f"{name}: --time не задано, первый шаг {target_time}")
+        else:
+            target_time = np.datetime64(job.time_ns, "ns")
+
+        logs.append(f"Загружаю срез ERA5: {job.dataset_path} @ {target_time} …")
+        wind_slice = load_wind_slice(job.dataset_path, target_time)
+        logs.append(
+            f"Срез загружен · {name} · время={wind_slice.time} "
+            f"· уровней={len(wind_slice.pressure)} "
+            f"· lat={len(wind_slice.lat)} · lon={len(wind_slice.lon)}"
+        )
+
+        wb = world_bounds_from_axes(
+            np.asarray(wind_slice.lat, dtype=np.float64),
+            np.asarray(wind_slice.lon, dtype=np.float64),
+            origin_lat=wind_slice.origin_lat,
+            origin_lon=wind_slice.origin_lon,
+            pressure_axis_hpa=np.asarray(wind_slice.pressure, dtype=np.float64),
+        )
+        logs.append(
+            f"[wind-viz] {name} · X [{wb.x_min:.1f} … {wb.x_max:.1f}] м · "
+            f"Y [{wb.y_min:.1f} … {wb.y_max:.1f}] м · "
+            f"Z [{wb.z_min:.1f} … {wb.z_max:.1f}] м"
+        )
+
+        fig = build_wind_figure(
+            wind_slice,
+            title=era5_dataset_title(job.dataset_path),
+            stride_lon=job.stride_lon,
+            stride_lat=job.stride_lat,
+            stride_altitude_m=job.stride_altitude_m,
+            w_scale=job.w_scale,
+        )
+        save_figure(fig, plot_path)
+        logs.append(f"График сохранён: {plot_path}")
+        return WindPlotRenderResult(
+            dataset_name=name,
+            plot_path=plot_path,
+            saved=True,
+            log_lines=tuple(logs),
+        )
+    except Exception as exc:
+        return WindPlotRenderResult(
+            dataset_name=name,
+            plot_path=None,
+            saved=False,
+            log_lines=tuple(logs),
+            error=f"{name}: {exc}",
+        )
+
+
+def render_wind_plots(
+    jobs: Sequence[WindPlotRenderJob],
+    *,
+    workers: int = 1,
+) -> list[WindPlotRenderResult]:
+    """Выполнить задания последовательно или в пуле процессов."""
+    job_list = list(jobs)
+    if not job_list:
+        return []
+
+    n_workers = max(1, int(workers))
+    if n_workers == 1 or len(job_list) == 1:
+        return [render_wind_plot_job(job) for job in job_list]
+
+    max_workers = min(n_workers, len(job_list))
+    results: list[WindPlotRenderResult] = []
+    with ProcessPoolExecutor(max_workers=max_workers) as pool:
+        futures = [pool.submit(render_wind_plot_job, job) for job in job_list]
+        for future in as_completed(futures):
+            results.append(future.result())
+    return sorted(results, key=lambda item: item.dataset_name)

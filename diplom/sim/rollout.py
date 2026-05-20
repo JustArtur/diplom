@@ -72,6 +72,7 @@ def rollout_episodes(
                         "position": list(record["position"]),
                         "wind": list(record["wind"]),
                         "sim_time": str(record["sim_time"]),
+                        "vertical_speed": float(record["vertical_speed"]),
                         "target_position": list(record["target_position"]),
                     }
                 )

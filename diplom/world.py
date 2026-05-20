@@ -121,6 +121,15 @@ def default_target_position(bounds: WorldBounds) -> np.ndarray:
     return np.array([center_x, center_y, z], dtype=np.float32)
 
 
+def resolve_sim_time(
+    sim_time: np.datetime64 | None,
+    *,
+    time_min: np.datetime64,
+) -> np.datetime64:
+    """Подставить начало временной оси ERA5, если момент старта не задан явно."""
+    return time_min if sim_time is None else sim_time
+
+
 def resolve_balloon_config(balloon: BalloonConfig, bounds: WorldBounds) -> BalloonConfig:
     """Подставить координаты по умолчанию, если они не заданы явно."""
     initial_position = (

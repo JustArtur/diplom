@@ -9,15 +9,17 @@ import numpy as np
 from gymnasium import spaces
 
 
-def build_worker_policy(env: gym.Env) -> Any:
+def build_worker_policy(env: gym.Env, *, learning_rate: float = 3e-4) -> Any:
     from stable_baselines3.common.policies import ActorCriticPolicy
     from stable_baselines3.common.utils import ConstantSchedule
+
+    from diplom.train.ppo_policy import build_ppo_policy_kwargs
 
     return ActorCriticPolicy(
         env.observation_space,
         env.action_space,
-        ConstantSchedule(3e-4),
-        net_arch=dict(pi=[64, 64], vf=[64, 64]),
+        ConstantSchedule(learning_rate),
+        **build_ppo_policy_kwargs(),
     )
 
 

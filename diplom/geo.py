@@ -40,6 +40,15 @@ def altitude_to_pressure_hpa_scalar(height_m: float) -> float:
     return p0 * (1.0 - (l * height) / t0) ** exponent
 
 
+def pressure_levels_within_altitude(
+    pressure_hpa: np.ndarray,
+    max_altitude_m: float,
+) -> np.ndarray:
+    """Булева маска: True для уровней, чья эквивалентная высота ISA ≤ max_altitude_m."""
+    alt_m = pressure_hpa_to_altitude_m(np.asarray(pressure_hpa, dtype=np.float64))
+    return alt_m <= float(max_altitude_m)
+
+
 def pressure_hpa_to_altitude_m(pressure_hpa: np.ndarray) -> np.ndarray:
     """Высота (м) по давлению (гПа), обратная к `altitude_to_pressure_hpa` в диапазоне ISA."""
     p0 = np.float32(1013.25)

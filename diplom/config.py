@@ -9,13 +9,27 @@ from diplom.envs.constants import (
     ACTION_LIMIT,
     DEFAULT_DT,
     MAX_EPISODE_STEPS,
+    REWARD_DISTANCE_SCALE,
+    REWARD_ENERGY_COEF,
+    REWARD_ENERGY_SCALE,
+    REWARD_PROGRESS_SCALE,
+    SUCCESS_REWARD,
     TARGET_REACH_RADIUS,
     TRAIN_INITIAL_POSITION_DELTA,
+    TRAIN_MAX_EPISODE_STEPS,
     TRAIN_TARGET_POSITION_DELTA,
 )
-from diplom.sim.constants import DEFAULT_AIR_WEIGHT, SIM_TIME
+from diplom.sim.constants import DEFAULT_AIR_WEIGHT
 from diplom.viz.constants import WINDOW_SIZE
-from diplom.wind.constants import DEFAULT_WIND_DATA_PATH
+from diplom.data.era5_paths import (
+    DEFAULT_ERA5_EAST,
+    DEFAULT_ERA5_END,
+    DEFAULT_ERA5_NORTH,
+    DEFAULT_ERA5_OUTFILE,
+    DEFAULT_ERA5_SOUTH,
+    DEFAULT_ERA5_START,
+    DEFAULT_ERA5_WEST,
+)
 
 
 # Набор уровней давления ERA5, которые используем для обучения и симуляции по умолчанию.
@@ -23,7 +37,7 @@ DEFAULT_PRESSURE_LEVELS: tuple[str, ...] = (
     '1000',
     '900',
     '800',
-    '700'
+    '700',
     '650',
     '600',
     '550',
@@ -37,7 +51,7 @@ DEFAULT_PRESSURE_LEVELS: tuple[str, ...] = (
     '150',
     '100',
     '90',
-    '80'
+    '80',
     '70',
     '60',
     '50',
@@ -48,6 +62,7 @@ DEFAULT_PRESSURE_LEVELS: tuple[str, ...] = (
     '15',
     '10',
     '5',
+    '3',
     '1'
 )
 
@@ -69,36 +84,38 @@ class BalloonConfig:
     # Базовая целевая точка, к которой должен стремиться агент.
     # Если не задана, будет подставлена из географических границ датасета.
     target_position: np.ndarray | None = None
-    # Стартовое модельное время, которое используется для запроса ветра.
-    sim_time: np.datetime64 = SIM_TIME
+    # Стартовое модельное время для запроса ветра; None — первый шаг времени из ERA5.
+    sim_time: np.datetime64 | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class DownloadConfig:
     # Куда сохранять скачанный ERA5-файл.
-    outfile: Path = Path("data/era5_sample.nc")
+    outfile: Path = DEFAULT_ERA5_OUTFILE
     # Северная граница области запроса.
-    north: float = 60.0
+    north: float = DEFAULT_ERA5_NORTH
     # Западная граница области запроса.
-    west: float = 40.0
+    west: float = DEFAULT_ERA5_WEST
     # Южная граница области запроса.
-    south: float = 40.0
+    south: float = DEFAULT_ERA5_SOUTH
     # Восточная граница области запроса.
-    east: float = 65.0
+    east: float = DEFAULT_ERA5_EAST
     # Начало периода скачивания.
-    start: str = "2024-07-01"
+    start: str = DEFAULT_ERA5_START
     # Конец периода скачивания.
-    end: str = "2024-07-03"
+    end: str = DEFAULT_ERA5_END
     # Уровни давления, которые нужно запросить.
     pressure_levels: tuple[str, ...] = DEFAULT_PRESSURE_LEVELS
     # Список переменных ERA5, которые нужно скачать.
     variables: tuple[str, ...] = DEFAULT_VARIABLES
+    # Шаг по часам в запросе CDS: 1 — все 24 ч, 2 — 00:00, 02:00, …, 22:00.
+    hour_step: int = 24
 
 
 @dataclass(frozen=True, slots=True)
 class WindConfig:
     # Путь к NetCDF-файлу с данными ветра.
-    path: Path = DEFAULT_WIND_DATA_PATH
+    path: Path = DEFAULT_ERA5_OUTFILE
     # Опорная широта для локальной системы координат.
     # Если не задана, будет взята из фактической юго-западной границы файла.
     origin_lat: float | None = None
@@ -120,7 +137,7 @@ class EnvironmentConfig:
     randomize_start_state: bool = False
     # Включать ли рандомизацию стартового времени в train-режиме.
     randomize_start_time: bool = False
-    # Полуширина окна случайного времени вокруг середины диапазона датасета.
+    # Ширина окна случайного стартового времени от начала диапазона датасета.
     train_start_time_delta: np.timedelta64 = np.timedelta64(12, "h")
     # Амплитуда случайного смещения стартовой позиции для train-эпизодов.
     train_initial_position_delta: np.ndarray = field(
@@ -134,8 +151,18 @@ class EnvironmentConfig:
     action_limit: float = ACTION_LIMIT
     # Радиус вокруг цели, при попадании в который эпизод считается завершённым успешно.
     target_reach_radius: float = TARGET_REACH_RADIUS
-    # Максимальное число шагов в одном эпизоде (защита от бесконечных эпизодов).
+    # Максимальное число шагов в одном эпизоде (eval/rollout; в train подменяется train_max_episode_steps).
     max_episode_steps: int = MAX_EPISODE_STEPS
+    # Лимит шагов эпизода при обучении PPO.
+    train_max_episode_steps: int = TRAIN_MAX_EPISODE_STEPS
+    # progress (Δdist, м) / scale; плотный штраф −distance / reward_distance_scale.
+    reward_progress_scale: float = REWARD_PROGRESS_SCALE
+    reward_distance_scale: float = REWARD_DISTANCE_SCALE
+    reward_energy_coef: float = REWARD_ENERGY_COEF
+    reward_energy_scale: float = REWARD_ENERGY_SCALE
+    success_reward: float = SUCCESS_REWARD
+    # Делить компоненты obs на фиксированные масштабы (совместимо с worker rollout).
+    normalize_observations: bool = True
     # Каталог JSONL-шагов для HTML-траекторий; None — не писать шаги на диск.
     trajectory_steps_dir: Path | None = None
     # Сколько завершённых эпизодов хранить на диске для одной среды (старые удаляются).
@@ -171,6 +198,10 @@ class TrainingConfig:
     use_worker_policy_rollout: bool = True
     # n_steps PPO на среду за rollout (должен совпадать с n_steps в PPO(...)).
     ppo_n_steps: int = 4096
+    # Энтропийный коэффициент PPO (меньше — меньше раздувается log_std).
+    ent_coef: float = 0.001
+    # Learning rate PPO.
+    learning_rate: float = 3e-4
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,8 +212,8 @@ class VisualizationConfig:
     bg_bottom: str = "deepskyblue"
     # Верхний цвет фона сцены.
     bg_top: str = "midnightblue"
-    # Время старта визуализации.
-    sim_start_time: np.datetime64 = SIM_TIME
+    # Время старта визуализации; None — первый шаг времени из ERA5.
+    sim_start_time: np.datetime64 | None = None
 
 
 @dataclass(frozen=True, slots=True)

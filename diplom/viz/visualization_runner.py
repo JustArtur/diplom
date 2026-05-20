@@ -5,7 +5,7 @@ from dataclasses import replace
 import pyvista as pv
 
 from diplom.config import AppConfig, VisualizationConfig
-from diplom.world import log_world_bounds
+from diplom.world import log_world_bounds, resolve_sim_time
 from diplom.wind.factory import build_wind_interpolator
 from .balloon_simulation import BalloonSimulation
 from .hud import BalloonHUD
@@ -36,10 +36,13 @@ class VisualizationRunner:
             wind_path=config.wind.path,
             prefix="[viz-real]",
         )
-        # Визуализация использует общий sim-конфиг, но стартовое время берёт из визуального слоя.
+        sim_time = resolve_sim_time(
+            config.visualization.sim_start_time,
+            time_min=wind_interpolator.time_min,
+        )
         simulation_config = replace(
             config.simulation,
-            balloon=replace(config.simulation.balloon, sim_time=config.visualization.sim_start_time),
+            balloon=replace(config.simulation.balloon, sim_time=sim_time),
         )
         simulation = create_simulation(simulation_config, wind_interpolator)
         plotter = self.build_plotter(config.visualization)

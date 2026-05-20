@@ -8,6 +8,18 @@ import numpy as np
 from gymnasium import spaces
 
 from diplom.config import BalloonConfig, EnvironmentConfig, SimulationConfig
+from diplom.envs.constants import (
+    OBS_AIR_DENSITY_SCALE,
+    OBS_AIR_WEIGHT_SCALE,
+    OBS_ALTITUDE_SCALE,
+    OBS_ENERGY_SCALE,
+    OBS_PRESSURE_SCALE,
+    OBS_TEMPERATURE_SCALE,
+    OBS_VERTICAL_ACCELERATION_SCALE,
+    OBS_VERTICAL_SPEED_SCALE,
+    OBS_WIND_SCALE,
+    OBS_XY_SCALE,
+)
 from diplom.sim.factory import create_simulation
 from diplom.sim.simulation import SimResult, Simulation
 from diplom.world import WorldBounds, resolve_balloon_config
@@ -34,6 +46,12 @@ class BalloonEnv(gym.Env):
         self.dt = float(config.dt)
         self.initial_air_weight = config.initial_air_weight
         self.max_episode_steps = config.max_episode_steps
+        self.reward_progress_scale = float(config.reward_progress_scale)
+        self.reward_distance_scale = float(config.reward_distance_scale)
+        self.reward_energy_coef = float(config.reward_energy_coef)
+        self.reward_energy_scale = float(config.reward_energy_scale)
+        self.success_reward = float(config.success_reward)
+        self.normalize_observations = bool(config.normalize_observations)
         self.randomize_start_state = config.randomize_start_state
         self.randomize_start_time = config.randomize_start_time
         self.train_start_time_delta = config.train_start_time_delta
@@ -83,6 +101,7 @@ class BalloonEnv(gym.Env):
     def step(self, action):
         clipped_action = self._clip_action(action)
         previous_position = np.array(self.sim.position, dtype=np.float32)
+        previous_energy = float(self.sim.energy_spent)
 
         self._step_count += 1
         result = self.sim.step(self.dt, clipped_action)
@@ -90,20 +109,29 @@ class BalloonEnv(gym.Env):
         previous_distance = float(np.linalg.norm(result.target_position - previous_position))
         current_distance = float(np.linalg.norm(result.target_position - result.position))
         progress_reward = previous_distance - current_distance
+        energy_delta = max(0.0, float(result.energy_spent) - previous_energy)
 
-        reward = progress_reward
+        progress_term = progress_reward / self.reward_progress_scale
+        distance_term = -current_distance / self.reward_distance_scale
+        energy_term = -self.reward_energy_coef * energy_delta / self.reward_energy_scale
+        reward = progress_term + distance_term + energy_term
+
         terminated = bool(current_distance <= float(self.target_reach_radius))
         # Эпизод принудительно завершается по достижению лимита шагов.
         truncated = bool(self._step_count >= self.max_episode_steps)
 
         if terminated:
-            reward += 100.0
+            reward += self.success_reward
 
         step_record = self._build_step_record(
             result=result,
             clipped_action=clipped_action,
             progress_reward=progress_reward,
             current_distance=current_distance,
+            reward=float(reward),
+            progress_term=progress_term,
+            distance_term=distance_term,
+            energy_term=energy_term,
             terminated=terminated,
             truncated=truncated,
         )
@@ -115,6 +143,9 @@ class BalloonEnv(gym.Env):
         info = {
             "progress_reward": float(progress_reward),
             "distance_to_target": float(current_distance),
+            "reward_progress_term": float(progress_term),
+            "reward_distance_term": float(distance_term),
+            "reward_energy_term": float(energy_term),
             "terminated": bool(terminated),
             "truncated": bool(truncated),
         }
@@ -178,6 +209,10 @@ class BalloonEnv(gym.Env):
         clipped_action: float,
         progress_reward: float,
         current_distance: float,
+        reward: float,
+        progress_term: float,
+        distance_term: float,
+        energy_term: float,
         terminated: bool,
         truncated: bool,
     ) -> dict[str, Any]:
@@ -186,11 +221,16 @@ class BalloonEnv(gym.Env):
             "wind": [float(v) for v in result.wind],
             "target_position": [float(v) for v in result.target_position],
             "action": float(clipped_action),
-            "reward": float(progress_reward),
+            "reward": reward,
+            "progress_reward": float(progress_reward),
+            "reward_progress_term": progress_term,
+            "reward_distance_term": distance_term,
+            "reward_energy_term": energy_term,
             "distance_to_target": float(current_distance),
             "terminated": bool(terminated),
             "truncated": bool(truncated),
             "sim_time": str(self.sim.sim_time),
+            "vertical_speed": float(result.vertical_speed),
         }
 
     def close(self) -> None:
@@ -218,19 +258,48 @@ class BalloonEnv(gym.Env):
 
     def to_obs(self, sim_result: SimResult) -> np.ndarray:
         """Плоский вектор наблюдений shape=(19,) dtype=float32."""
+        position = np.asarray(sim_result.position, dtype=np.float32)
+        target = np.asarray(sim_result.target_position, dtype=np.float32)
+        delta = target - position
+        wind = np.asarray(sim_result.wind, dtype=np.float32)
+        if not self.normalize_observations:
+            return np.concatenate(
+                [
+                    position,
+                    target,
+                    delta,
+                    wind,
+                    [sim_result.energy_spent],
+                    [sim_result.air_weight],
+                    [sim_result.vertical_speed],
+                    [sim_result.vertical_acceleration],
+                    [sim_result.air_density],
+                    [sim_result.temperature],
+                    [sim_result.pressure],
+                ],
+                dtype=np.float32,
+            )
+
+        def _scale_xyz(vec: np.ndarray, xy_scale: float, z_scale: float) -> np.ndarray:
+            out = vec.astype(np.float32, copy=True)
+            out[0] /= xy_scale
+            out[1] /= xy_scale
+            out[2] /= z_scale
+            return out
+
         return np.concatenate(
             [
-                sim_result.position,                                           # 3
-                sim_result.target_position,                                    # 3
-                sim_result.target_position - sim_result.position,             # 3
-                sim_result.wind,                                               # 3
-                [sim_result.energy_spent],                                     # 1
-                [sim_result.air_weight],                                       # 1
-                [sim_result.vertical_speed],                                   # 1
-                [sim_result.vertical_acceleration],                            # 1
-                [sim_result.air_density],                                      # 1
-                [sim_result.temperature],                                      # 1
-                [sim_result.pressure],                                         # 1
+                _scale_xyz(position, OBS_XY_SCALE, OBS_ALTITUDE_SCALE),
+                _scale_xyz(target, OBS_XY_SCALE, OBS_ALTITUDE_SCALE),
+                _scale_xyz(delta, OBS_XY_SCALE, OBS_ALTITUDE_SCALE),
+                wind / OBS_WIND_SCALE,
+                [sim_result.energy_spent / OBS_ENERGY_SCALE],
+                [sim_result.air_weight / OBS_AIR_WEIGHT_SCALE],
+                [sim_result.vertical_speed / OBS_VERTICAL_SPEED_SCALE],
+                [sim_result.vertical_acceleration / OBS_VERTICAL_ACCELERATION_SCALE],
+                [sim_result.air_density / OBS_AIR_DENSITY_SCALE],
+                [sim_result.temperature / OBS_TEMPERATURE_SCALE],
+                [sim_result.pressure / OBS_PRESSURE_SCALE],
             ],
             dtype=np.float32,
         )
@@ -257,8 +326,7 @@ class BalloonEnv(gym.Env):
             target_position = self._sample_target_position(initial_position)
 
         if self.randomize_start_time:
-            # Время эпизода выбираем вокруг середины диапазона датасета и ограничиваем его границами.
-            sim_time = self._sample_time(
+            sim_time = self._sample_time_from_dataset_start(
                 self.wind_interp.time_min,
                 self.wind_interp.time_max,
                 self.train_start_time_delta,
@@ -295,7 +363,7 @@ class BalloonEnv(gym.Env):
         sample_high = np.minimum(center + delta, high)
         return self.np_random.uniform(low=sample_low, high=sample_high).astype(np.float32)
 
-    def _sample_time(
+    def _sample_time_from_dataset_start(
         self,
         time_min: np.datetime64,
         time_max: np.datetime64,
@@ -306,12 +374,10 @@ class BalloonEnv(gym.Env):
         if max_ns <= min_ns:
             return np.datetime64(min_ns, "ns")
 
-        mid_ns = min_ns + (max_ns - min_ns) // 2
         delta_ns = np.asarray(delta, dtype="timedelta64[ns]").astype(np.int64)
-        low_ns = max(min_ns, mid_ns - delta_ns)
-        high_ns = min(max_ns, mid_ns + delta_ns)
-        if high_ns <= low_ns:
-            return np.datetime64(mid_ns, "ns")
+        high_ns = min(max_ns, min_ns + delta_ns)
+        if high_ns <= min_ns:
+            return np.datetime64(min_ns, "ns")
 
-        sampled_ns = int(self.np_random.integers(low_ns, high_ns + 1))
+        sampled_ns = int(self.np_random.integers(min_ns, high_ns + 1))
         return np.datetime64(sampled_ns, "ns")

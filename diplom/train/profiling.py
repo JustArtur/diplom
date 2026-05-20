@@ -88,6 +88,7 @@ def run_cprofile_train(
     multiprocess: bool = True,
     profile_targets: MemrayProfileTargets | None = None,
     print_stats: bool = True,
+    run_name: str | None = None,
 ) -> tuple[Path, list[CprofileProcessReport]]:
     """cProfile обучения: один процесс (DummyVecEnv) или выбранные процессы run-а."""
     from diplom.train.ppo_runner import train_ppo
@@ -99,7 +100,7 @@ def run_cprofile_train(
             "Укажите хотя бы один флаг: --profile-main, --profile-envs или --profile-trajectory"
         )
 
-    run_dir = next_run_dir(config.training.logdir)
+    run_dir = next_run_dir(config.training.logdir, run_name=run_name)
     n_envs = max(1, config.training.n_envs)
 
     if multiprocess:
@@ -315,6 +316,7 @@ def run_memray_train(
     print_table: bool = True,
     multiprocess: bool = True,
     profile_targets: MemrayProfileTargets | None = None,
+    run_name: str | None = None,
 ) -> tuple[Path, list[MemrayProcessReport]]:
     """memray-отчёт обучения: один процесс (DummyVecEnv) или все процессы run-а."""
     from diplom.train.ppo_runner import train_ppo
@@ -327,7 +329,7 @@ def run_memray_train(
         )
 
     Tracker = _load_tracker()
-    run_dir = next_run_dir(config.training.logdir)
+    run_dir = next_run_dir(config.training.logdir, run_name=run_name)
     n_envs = max(1, config.training.n_envs)
 
     if multiprocess:

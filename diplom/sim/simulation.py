@@ -60,6 +60,7 @@ class Simulation:
         self.energy_spent = np.float32(0.0)
         self.air_density = np.float32(0.0)
         self._warned_world_bounds = False
+        self._warned_dataset_time = False
         self._wind_buf = np.zeros(3, dtype=np.float32)
 
         wb = self.world_bounds
@@ -86,9 +87,25 @@ class Simulation:
     def _clamp_time(self) -> None:
         t_ns = int(self.sim_time.astype("datetime64[ns]"))
         if t_ns < self._time_min_ns:
+            self._warn_dataset_time_if_needed()
             self.sim_time = self._time_min
         elif t_ns > self._time_max_ns:
+            self._warn_dataset_time_if_needed()
             self.sim_time = self._time_max
+
+    def _warn_dataset_time_if_needed(self) -> None:
+        if self._warned_dataset_time:
+            return
+        self._warned_dataset_time = True
+        env_label = f"env_{self.env_idx:03d}" if self.env_idx is not None else "env"
+        warnings.warn(
+            (
+                f"[{env_label}] Время симуляции вышло за пределы временного диапазона ERA5; "
+                f"будет клампиться к [{self._time_min}, {self._time_max}]."
+            ),
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
     def _apply_position(self, proposed_x: float, proposed_y: float, proposed_z: float) -> None:
         self.position[0] = np.float32(self._clamp_scalar(proposed_x, self._x_min, self._x_max))
@@ -117,8 +134,8 @@ class Simulation:
             y(t+dt) = y(t) + v_y · k · dt
             z(t+dt) = z(t) + v_z · k · dt
         """
-        # np.datetime64 не умеет складываться с float, поэтому переводим dt в timedelta.
-        self.sim_time += np.timedelta64(int(dt), "s")
+        # np.datetime64 не умеет складываться с float; dt часто < 1 с (DEFAULT_DT=0.5).
+        self.sim_time += np.timedelta64(int(round(dt * 1000)), "ms")
         self._clamp_time()
         wind = self.interpolate_wind()
 

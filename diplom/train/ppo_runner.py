@@ -7,13 +7,16 @@ from typing import Sequence, Union
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv
 
 from diplom.config import AppConfig, EnvironmentConfig, WindConfig
 from diplom.envs.balloon_env import BalloonEnv
 from diplom.envs.factory import build_env
 from diplom.torch_device import resolve_torch_device
+from diplom.train.episode_stats_callback import EpisodeStatsCallback
 from diplom.train.info_logging_callback import InfoLoggingCallback
+from diplom.train.ppo_policy import build_ppo_policy_kwargs
 from diplom.train.run_dirs import next_run_dir
 from diplom.world import log_world_bounds
 from diplom.wind.factory import build_wind_interpolator
@@ -35,7 +38,8 @@ def _env_factory(
     process_name = env_process_name(env_idx)
     start_process_memray_if_enabled(process_name)
     start_process_cprofile_if_enabled(process_name)
-    return build_env(env_config, wind_config, env_idx=env_idx)
+    env = build_env(env_config, wind_config, env_idx=env_idx)
+    return Monitor(env)
 
 
 def _make_vec_env(
@@ -46,11 +50,9 @@ def _make_vec_env(
 ) -> VecEnv:
     n_envs = max(1, config.training.n_envs)
     ensure_wind_interpolator_cache(config.wind.path)
-    # Включаем рандомизацию старта — нужна при обучении.
     env_config = replace(
         config.environment,
-        randomize_start_state=True,
-        randomize_start_time=True,
+        max_episode_steps=config.environment.train_max_episode_steps,
         trajectory_steps_dir=trajectory_steps_dir,
     )
     factories = [
@@ -83,7 +85,9 @@ def train_ppo(
     *,
     force_dummy_vec_env: bool = False,
     run_dir: Path | None = None,
+    run_name: str | None = None,
     enable_trajectory_viz: bool = True,
+    resume: bool = False,
 ) -> Path:
     """Train PPO agent on the balloon environment.
 
@@ -99,7 +103,7 @@ def train_ppo(
     print(f"[train_ppo] Using device={device}")  # noqa: T201
 
     if run_dir is None:
-        run_dir = next_run_dir(logdir)
+        run_dir = next_run_dir(logdir, run_name=run_name)
     else:
         run_dir.mkdir(parents=True, exist_ok=True)
     traj_dir = run_dir / "trajectories"
@@ -116,6 +120,7 @@ def train_ppo(
     elif not force_dummy_vec_env and config.training.n_envs > 1:
         print("[train_ppo] VecEnv: ShmemSubprocVecEnv (policy в main, --main-policy-rollout)")  # noqa: T201
     info_callback = InfoLoggingCallback()
+    episode_stats_callback = EpisodeStatsCallback()
 
     probe_interp = build_wind_interpolator(config.wind)
     try:
@@ -154,11 +159,16 @@ def train_ppo(
     try:
         # Если в logdir уже есть сохранённая модель, продолжаем обучение с неё.
         # Иначе инициализируем новую.
-        if model_path.exists():
+        if model_path.exists() and resume:
             print(f"[train_ppo] Продолжаем обучение из {model_path}")  # noqa: T201
             model = ppo_cls.load(model_path, env=vec_env, device=device)
             model.tensorboard_log = str(run_dir)
         else:
+            if model_path.exists() and not resume:
+                print(  # noqa: T201
+                    f"[train_ppo] {model_path} найден, но --resume не задан — "
+                    "обучаем новую модель (старый файл будет перезаписан в конце)"
+                )
             model = ppo_cls(
                 policy="MlpPolicy",
                 env=vec_env,
@@ -168,15 +178,14 @@ def train_ppo(
                 # 512 делит rollout_size=4096*n_envs нацело и эффективнее на MPS/CPU.
                 batch_size=512,
                 n_epochs=10,
-                learning_rate=3e-4,
+                learning_rate=config.training.learning_rate,
                 gamma=0.99,
                 gae_lambda=0.95,
                 clip_range=0.2,
-                # Небольшой энтропийный бонус удерживает агента от преждевременной
-                # конвергенции к детерминированной политике.
-                ent_coef=0.005,
+                ent_coef=config.training.ent_coef,
                 vf_coef=0.5,
                 max_grad_norm=0.5,
+                policy_kwargs=build_ppo_policy_kwargs(),
                 verbose=ppo_verbose,
                 tensorboard_log=str(run_dir),
                 seed=config.training.seed,
@@ -184,7 +193,7 @@ def train_ppo(
             )
         model.verbose = ppo_verbose
         extra_callbacks = list(callbacks) if callbacks is not None else []
-        learn_callbacks: list[BaseCallback] = [info_callback]
+        learn_callbacks: list[BaseCallback] = [info_callback, episode_stats_callback]
         if traj_callback is not None:
             learn_callbacks.append(traj_callback)
         learn_callbacks.extend(extra_callbacks)

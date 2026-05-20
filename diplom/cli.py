@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,12 @@ from diplom.config import (
     TrainingConfig,
     VisualizationConfig,
 )
+from diplom.data.era5_paths import (
+    DEFAULT_ERA5_DATA_DIR,
+    era5_outfile_for_bounds,
+    list_era5_datasets,
+    wind_plot_html_path,
+)
 
 # Загружаем переменные окружения (.env) — ключи CDS API и т.п.
 load_dotenv()
@@ -35,6 +42,38 @@ DEFAULT_TRAINING_CONFIG = TrainingConfig()
 DEFAULT_VISUALIZATION_CONFIG = VisualizationConfig()
 DEFAULT_ROLLOUT_MODEL_PATH = DEFAULT_TRAINING_CONFIG.logdir / "ppo_model.zip"
 
+_RUN_NAME_HELP = (
+    "Имя run-а; каталог будет {имя}#PPO_N (индекс как обычно по порядку). "
+    "Без флага — PPO_N"
+)
+
+_START_TIME_HELP = (
+    "Момент старта симуляции (ISO 8601). "
+    "По умолчанию — первый шаг времени из датасета ERA5."
+)
+START_TIME_OPTION = typer.Option(None, "--start-time", help=_START_TIME_HELP)
+
+
+def _balloon_config(
+    start_time: datetime | None = None,
+    **kwargs: object,
+) -> BalloonConfig:
+    balloon = BalloonConfig(**kwargs)
+    if start_time is not None:
+        balloon = replace(balloon, sim_time=np.datetime64(start_time))
+    return balloon
+
+
+def _visualization_config(start_time: datetime | None = None) -> VisualizationConfig:
+    viz = VisualizationConfig(
+        window_size=DEFAULT_VISUALIZATION_CONFIG.window_size,
+        bg_bottom=DEFAULT_VISUALIZATION_CONFIG.bg_bottom,
+        bg_top=DEFAULT_VISUALIZATION_CONFIG.bg_top,
+    )
+    if start_time is not None:
+        viz = replace(viz, sim_start_time=np.datetime64(start_time))
+    return viz
+
 
 def _build_app_config(
     *,
@@ -46,12 +85,16 @@ def _build_app_config(
     verbose: int = DEFAULT_TRAINING_CONFIG.verbose,
     use_worker_policy_rollout: bool = DEFAULT_TRAINING_CONFIG.use_worker_policy_rollout,
     target_reach_radius: float = DEFAULT_ENVIRONMENT_CONFIG.target_reach_radius,
-    start_time: datetime = datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
+    start_time: datetime | None = None,
+    randomize_start_state: bool = True,
+    randomize_start_time: bool = True,
 ) -> AppConfig:
     return AppConfig(
         environment=EnvironmentConfig(
-            balloon=BalloonConfig(sim_time=np.datetime64(start_time)),
+            balloon=_balloon_config(start_time),
             target_reach_radius=target_reach_radius,
+            randomize_start_state=randomize_start_state,
+            randomize_start_time=randomize_start_time,
         ),
         training=TrainingConfig(
             total_timesteps=total_timesteps,
@@ -62,12 +105,7 @@ def _build_app_config(
             verbose=verbose,
             use_worker_policy_rollout=use_worker_policy_rollout,
         ),
-        visualization=VisualizationConfig(
-            window_size=DEFAULT_VISUALIZATION_CONFIG.window_size,
-            bg_bottom=DEFAULT_VISUALIZATION_CONFIG.bg_bottom,
-            bg_top=DEFAULT_VISUALIZATION_CONFIG.bg_top,
-            sim_start_time=np.datetime64(start_time),
-        ),
+        visualization=_visualization_config(start_time),
     )
 
 
@@ -75,7 +113,12 @@ def _build_app_config(
 
 @app.command()
 def download(
-    outfile: Path = typer.Option(DEFAULT_DOWNLOAD_CONFIG.outfile, "--outfile", "-o"),
+    outfile: Path | None = typer.Option(
+        None,
+        "--outfile",
+        "-o",
+        help="Путь к итоговому NetCDF; по умолчанию era5_{north}_{south}_{west}_{east}_{start}_{end}.nc",
+    ),
     north: float = typer.Option(DEFAULT_DOWNLOAD_CONFIG.north, help="Северная граница широты"),
     west: float = typer.Option(DEFAULT_DOWNLOAD_CONFIG.west, help="Западная граница долготы"),
     south: float = typer.Option(DEFAULT_DOWNLOAD_CONFIG.south, help="Южная граница широты"),
@@ -94,14 +137,46 @@ def download(
         help="Имена переменных CDS; можно повторять.",
         show_default=False,
     ),
+    chunks_dir: Path | None = typer.Option(
+        None,
+        "--chunks-dir",
+        help="Каталог для дневных чанков; по умолчанию {outfile.stem}.chunks рядом с outfile.",
+    ),
+    keep_chunks: bool = typer.Option(
+        False,
+        "--keep-chunks",
+        help="Не удалять дневные NetCDF после склейки.",
+    ),
+    workers: int | None = typer.Option(
+        None,
+        "--workers", "-j",
+        min=1,
+        help="Параллельная загрузка по дням с последующей склейкой (2–4 обычно безопасно). "
+        "Без флага — один запрос CDS сразу в outfile.",
+    ),
+    hour_step: int = typer.Option(
+        DEFAULT_DOWNLOAD_CONFIG.hour_step,
+        "--hour-step",
+        min=1,
+        max=24,
+        help="Шаг по часам в запросе CDS: 2 → 00:00, 02:00, …, 22:00 (12 точек в сутки).",
+    ),
 ) -> None:
     """Скачать подмножество ERA5 в NetCDF."""
     from diplom.data.era5_download import download_era5_pressure
 
-    # CLI лишь собирает конфиг и передаёт его вниз.
+    resolved_outfile = outfile or era5_outfile_for_bounds(
+        north=north,
+        south=south,
+        west=west,
+        east=east,
+        start=start,
+        end=end,
+    )
+
     download_era5_pressure(
         DownloadConfig(
-            outfile=outfile,
+            outfile=resolved_outfile,
             north=north,
             west=west,
             south=south,
@@ -110,17 +185,18 @@ def download(
             end=end,
             pressure_levels=tuple(level),
             variables=tuple(variable),
-        )
+            hour_step=hour_step,
+        ),
+        chunks_dir=chunks_dir,
+        keep_chunks=keep_chunks,
+        workers=workers,
     )
 
 # ──────────────────── viz_real ────────────────────
 
 @app.command()
 def viz_real(
-    start_time: datetime = typer.Option(
-        datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
-        help="Время слоя симуляции",
-    ),
+    start_time: Optional[datetime] = START_TIME_OPTION,
 ) -> None:
     """Запуск PyVista-визуализации на реальном ветре."""
 
@@ -159,9 +235,16 @@ def train_ppo(
         "--target-radius",
         help="Радиус вокруг цели, при попадании в который эпизод считается успешным",
     ),
-    start_time: datetime = typer.Option(
-        datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
-        help="Базовое время симуляции; в train-эпизодах с рандомизацией будет переопределено.",
+    start_time: Optional[datetime] = START_TIME_OPTION,
+    randomize_position: bool = typer.Option(
+        True,
+        "--randomize-position/--no-randomize-position",
+        help="Случайное смещение стартовой позиции и цели вокруг базовых координат",
+    ),
+    randomize_time: bool = typer.Option(
+        True,
+        "--randomize-time/--no-randomize-time",
+        help="Случайное время эпизода в окне вокруг середины диапазона датасета",
     ),
     in_process: bool = typer.Option(
         False,
@@ -184,6 +267,16 @@ def train_ppo(
         "-v",
         help="Уровень логирования PPO в консоль (SB3): 0 — тихо, 1 — таблица метрик; env-метрики только в TensorBoard",
     ),
+    run_name: Optional[str] = typer.Option(
+        None,
+        "--run-name",
+        help=_RUN_NAME_HELP,
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Продолжить из runs/ppo/ppo_model.zip (без флага — новая модель)",
+    ),
 ) -> None:
     """Запустить обучение PPO-модели."""
     from diplom.train.ppo_runner import train_ppo as run_train_ppo
@@ -200,16 +293,58 @@ def train_ppo(
         use_worker_policy_rollout=not main_policy_rollout,
         target_reach_radius=target_reach_radius,
         start_time=start_time,
+        randomize_start_state=randomize_position,
+        randomize_start_time=randomize_time,
     )
     try:
         run_train_ppo(
             app_config,
             force_dummy_vec_env=in_process,
             enable_trajectory_viz=trajectories,
+            run_name=run_name,
+            resume=resume,
         )
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+
+
+# ──────────────────── export_tensorboard ────────────────────
+
+@app.command("export-tensorboard")
+def export_tensorboard(
+    path: Path = typer.Argument(
+        ...,
+        help="Файл events.out.tfevents.* или каталог (tb_1, PPO_N, runs/ppo)",
+    ),
+    recursive: bool = typer.Option(
+        True,
+        "--recursive/--no-recursive",
+        help="Искать event-файлы в подкаталогах",
+    ),
+) -> None:
+    """Экспорт scalar-метрик TensorBoard в CSV рядом с каждым event-файлом.
+
+    Создаёт файлы вида ``events.out.tfevents.<id>.scalars.csv`` с колонками:
+    tag, step, value, wall_time.
+
+    \b
+    Примеры:
+
+      diplom export-tensorboard runs/ppo/PPO_25/tb_1
+
+      diplom export-tensorboard runs/ppo/PPO_25/tb_1/events.out.tfevents.1779218441.host.0
+    """
+    from diplom.train.tensorboard_export import export_tensorboard_path
+
+    try:
+        results = export_tensorboard_path(path, recursive=recursive)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    for item in results:
+        typer.echo(f"{item.output}  ({item.rows} строк, из {item.source.name})")
 
 
 # ──────────────────── profile_ppo_mem / profile_ppo_cpu ────────────────────
@@ -273,9 +408,16 @@ def profile_ppo_mem(
         "--target-radius",
         help="Радиус успешного завершения эпизода",
     ),
-    start_time: datetime = typer.Option(
-        datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
-        help="Базовое время симуляции",
+    start_time: Optional[datetime] = START_TIME_OPTION,
+    randomize_position: bool = typer.Option(
+        True,
+        "--randomize-position/--no-randomize-position",
+        help="Случайное смещение стартовой позиции и цели вокруг базовых координат",
+    ),
+    randomize_time: bool = typer.Option(
+        True,
+        "--randomize-time/--no-randomize-time",
+        help="Случайное время эпизода в окне вокруг середины диапазона датасета",
     ),
     n_envs: int = typer.Option(
         DEFAULT_TRAINING_CONFIG.n_envs,
@@ -307,6 +449,11 @@ def profile_ppo_mem(
         False,
         "--main-policy-rollout",
         help="Policy+step в main (без гибрида worker+shmem)",
+    ),
+    run_name: Optional[str] = typer.Option(
+        None,
+        "--run-name",
+        help=_RUN_NAME_HELP,
     ),
 ) -> None:
     """Профиль памяти при обучении PPO (memray).
@@ -343,6 +490,8 @@ def profile_ppo_mem(
         use_worker_policy_rollout=not main_policy_rollout,
         target_reach_radius=target_reach_radius,
         start_time=start_time,
+        randomize_start_state=randomize_position,
+        randomize_start_time=randomize_time,
     )
     try:
         run_dir, reports = run_memray_train(
@@ -354,6 +503,7 @@ def profile_ppo_mem(
             print_table=not no_table,
             multiprocess=not single_process,
             profile_targets=profile_targets,
+            run_name=run_name,
         )
     except MemrayNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -406,8 +556,16 @@ def profile_ppo_cpu(
         DEFAULT_ENVIRONMENT_CONFIG.target_reach_radius,
         "--target-radius",
     ),
-    start_time: datetime = typer.Option(
-        datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
+    start_time: Optional[datetime] = START_TIME_OPTION,
+    randomize_position: bool = typer.Option(
+        True,
+        "--randomize-position/--no-randomize-position",
+        help="Случайное смещение стартовой позиции и цели вокруг базовых координат",
+    ),
+    randomize_time: bool = typer.Option(
+        True,
+        "--randomize-time/--no-randomize-time",
+        help="Случайное время эпизода в окне вокруг середины диапазона датасета",
     ),
     n_envs: int = typer.Option(
         DEFAULT_TRAINING_CONFIG.n_envs,
@@ -445,6 +603,11 @@ def profile_ppo_cpu(
         "--main-policy-rollout",
         help="Policy+step в main (без гибрида worker+shmem)",
     ),
+    run_name: Optional[str] = typer.Option(
+        None,
+        "--run-name",
+        help=_RUN_NAME_HELP,
+    ),
 ) -> None:
     """Профиль CPU (cProfile) при обучении PPO.
 
@@ -477,6 +640,8 @@ def profile_ppo_cpu(
         use_worker_policy_rollout=not main_policy_rollout,
         target_reach_radius=target_reach_radius,
         start_time=start_time,
+        randomize_start_state=randomize_position,
+        randomize_start_time=randomize_time,
     )
     try:
         run_dir, reports = run_cprofile_train(
@@ -486,6 +651,7 @@ def profile_ppo_cpu(
             multiprocess=not single_process,
             profile_targets=profile_targets,
             print_stats=not no_stats,
+            run_name=run_name,
         )
     except ValueError as exc:
         typer.echo(str(exc), err=True)
@@ -531,10 +697,7 @@ def rollout(
         help="Путь для сохранения интерактивного 3D-графика траекторий (HTML). "
              "Если не указан — график не строится.",
     ),
-    start_time: datetime = typer.Option(
-        datetime.fromisoformat(str(DEFAULT_VISUALIZATION_CONFIG.sim_start_time)),
-        help="Базовое время симуляции",
-    ),
+    start_time: Optional[datetime] = START_TIME_OPTION,
     device: str = typer.Option(
         DEFAULT_TRAINING_CONFIG.device,
         "--device", "-d",
@@ -547,7 +710,7 @@ def rollout(
 
     app_config = AppConfig(
         environment=EnvironmentConfig(
-            balloon=BalloonConfig(sim_time=np.datetime64(start_time)),
+            balloon=_balloon_config(start_time),
             target_reach_radius=target_reach_radius,
         ),
         training=replace(DEFAULT_TRAINING_CONFIG, device=device),
@@ -624,10 +787,15 @@ def rollout(
 
 @app.command("wind-viz")
 def wind_viz(
-    wind_file: Path = typer.Option(
-        Path("data/era5_sample.nc"),
+    wind_file: Optional[Path] = typer.Option(
+        None,
         "--wind-file", "-f",
-        help="Путь к ERA5 NetCDF-файлу",
+        help="Один ERA5 NetCDF; без флага — все *.nc из --data-dir",
+    ),
+    data_dir: Path = typer.Option(
+        DEFAULT_ERA5_DATA_DIR,
+        "--data-dir",
+        help="Каталог с ERA5 NetCDF (обрабатывается, если --wind-file не задан)",
     ),
     time: Optional[datetime] = typer.Option(
         None,
@@ -644,9 +812,9 @@ def wind_viz(
         ],
     ),
     output: Path = typer.Option(
-        Path("runs/wind/wind_field.html"),
+        Path("runs/wind"),
         "--output", "-o",
-        help="Куда сохранить HTML-файл с графиком",
+        help="Каталог для HTML-графиков (имя файла = имя датасета без .nc)",
     ),
     stride_lon: int = typer.Option(
         1, "--stride-lon",
@@ -673,94 +841,122 @@ def wind_viz(
         False, "--list-times",
         help="Вывести все доступные временны́е метки в датасете и выйти",
     ),
+    workers: int | None = typer.Option(
+        None,
+        "--workers", "-j",
+        min=1,
+        help="Число процессов для параллельной отрисовки. "
+        "По умолчанию: min(число новых графиков, число CPU).",
+    ),
 ) -> None:
-    """Построить интерактивный 3D-граф поля ветра ERA5.
+    """Построить интерактивные 3D-графы поля ветра ERA5.
 
-    Конусы показывают направление и скорость ветра на всех высотах,
-    широтах и долготах для выбранного временного среза ERA5.
+    По умолчанию обходит все ``*.nc`` в ``data/`` и сохраняет HTML в ``runs/wind/``.
+    Заголовок графика совпадает с именем датасета; уже существующие файлы пропускаются.
 
     Примеры:
 
     \b
-      # Список доступных временных меток
+      # Все датасеты из data/
+      diplom wind-viz
+
+    \b
+      # Список доступных временных меток (все датасеты или один файл)
       diplom wind-viz --list-times
 
     \b
-      # График на конкретное время с прореживанием
-      diplom wind-viz --time 2024-07-01T12:00:00 --stride-lat 2 --stride-lon 2 --stride-altitude-m 1000
+      # Параллельно 4 процесса
+      diplom wind-viz -j 4 --stride-lat 2 --stride-lon 2
+
+    \b
+      # Один файл, конкретное время
+      diplom wind-viz -f data/era5_....nc --time 2024-07-01T12:00:00 --stride-lat 2
     """
     from diplom.viz.wind_plot import (
-        build_wind_figure,
+        WindPlotRenderJob,
         list_available_times,
-        load_wind_slice,
-        save_figure,
+        render_wind_plots,
     )
 
-    if not wind_file.exists():
-        typer.echo(
-            f"[ошибка] Файл ERA5 не найден: {wind_file}\n"
-            "Скачайте данные командой: diplom download",
-            err=True,
-        )
+    if wind_file is not None:
+        dataset_paths = [wind_file]
+    else:
+        dataset_paths = list_era5_datasets(data_dir)
+        if not dataset_paths:
+            typer.echo(
+                f"[ошибка] В каталоге {data_dir} нет файлов *.nc.\n"
+                "Скачайте данные командой: diplom download",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+    missing = [p for p in dataset_paths if not p.exists()]
+    if missing:
+        for path in missing:
+            typer.echo(f"[ошибка] Файл ERA5 не найден: {path}", err=True)
         raise typer.Exit(code=1)
 
     if list_times:
-        available = list_available_times(wind_file)
-        typer.echo(f"Доступные временны́е метки в {wind_file}:")
-        for t in available:
-            typer.echo(f"  {t}")
+        for path in dataset_paths:
+            available = list_available_times(path)
+            typer.echo(f"Доступные временны́е метки в {path.name}:")
+            for t in available:
+                typer.echo(f"  {t}")
         return
 
-    # Если время не задано — берём первый шаг датасета
-    target_time: np.datetime64
-    if time is None:
-        available = list_available_times(wind_file)
-        if not available:
-            typer.echo("[ошибка] Датасет не содержит временны́х шагов.", err=True)
-            raise typer.Exit(code=1)
-        target_time = available[0]
-        typer.echo(f"--time не задано, используется первый шаг: {target_time}")
-    else:
-        target_time = np.datetime64(time)
+    time_ns: int | None = None
+    if time is not None:
+        time_ns = int(np.datetime64(time).astype("datetime64[ns]").astype(np.int64))
 
-    typer.echo(f"Загружаю срез ERA5: {wind_file} @ {target_time} …")
-    wind_slice = load_wind_slice(wind_file, target_time)
-    typer.echo(
-        f"Срез загружен · время={wind_slice.time} "
-        f"· уровней={len(wind_slice.pressure)} "
-        f"· lat={len(wind_slice.lat)} · lon={len(wind_slice.lon)}"
-    )
+    jobs: list[WindPlotRenderJob] = []
+    for dataset_path in dataset_paths:
+        plot_path = wind_plot_html_path(dataset_path, output)
+        if plot_path.exists():
+            typer.echo(f"Пропуск {dataset_path.name}: график уже есть → {plot_path}")
+            continue
+        jobs.append(
+            WindPlotRenderJob(
+                dataset_path=dataset_path,
+                output_dir=output,
+                time_ns=time_ns,
+                stride_lon=stride_lon,
+                stride_lat=stride_lat,
+                stride_altitude_m=stride_altitude_m,
+                w_scale=w_scale,
+            )
+        )
 
-    from diplom.world import log_world_bounds, world_bounds_from_axes
+    if not jobs:
+        typer.echo("Новых графиков не создано (все уже есть или нет датасетов).")
+        return
 
-    wb = world_bounds_from_axes(
-        np.asarray(wind_slice.lat, dtype=np.float64),
-        np.asarray(wind_slice.lon, dtype=np.float64),
-        origin_lat=wind_slice.origin_lat,
-        origin_lon=wind_slice.origin_lon,
-        pressure_axis_hpa=np.asarray(wind_slice.pressure, dtype=np.float64),
-    )
-    log_world_bounds(
-        wb,
-        origin_lat=wind_slice.origin_lat,
-        origin_lon=wind_slice.origin_lon,
-        wind_path=wind_file,
-        prefix="[wind-viz]",
-    )
+    n_workers = workers if workers is not None else min(len(jobs), os.cpu_count() or 1)
+    if n_workers > 1:
+        typer.echo(f"Параллельная отрисовка: {len(jobs)} график(ов), workers={n_workers}")
 
-    fig = build_wind_figure(
-        wind_slice,
-        stride_lon=stride_lon,
-        stride_lat=stride_lat,
-        stride_altitude_m=stride_altitude_m,
-        w_scale=w_scale,
-    )
+    results = render_wind_plots(jobs, workers=n_workers)
+    saved_paths: list[Path] = []
+    errors: list[str] = []
 
-    save_figure(fig, output)
-    typer.echo(f"График сохранён: {output}")
+    for result in results:
+        for line in result.log_lines:
+            typer.echo(line)
+        if result.error:
+            errors.append(result.error)
+        elif result.saved and result.plot_path is not None:
+            saved_paths.append(result.plot_path)
 
-    if open_browser:
-        webbrowser.open(output.resolve().as_uri())
+    if errors:
+        for msg in errors:
+            typer.echo(f"[ошибка] {msg}", err=True)
+        raise typer.Exit(code=1)
+
+    if not saved_paths:
+        typer.echo("Новых графиков не создано (все уже есть или нет датасетов).")
+        return
+
+    if open_browser and len(saved_paths) == 1:
+        webbrowser.open(saved_paths[0].resolve().as_uri())
 
 
 # ──────────────────── Точка входа ────────────────────
