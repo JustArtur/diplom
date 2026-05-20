@@ -6,8 +6,8 @@
 
 Публичный API:
   list_available_times(path)               → list[np.datetime64]
-  load_wind_slice(path, time_target)       → WindSlice
-  build_wind_figure(slice_, **opts)        → go.Figure
+  resolve_wind_time(interpolator, target)  → np.datetime64
+  build_wind_figure(interpolator, time, **opts) → go.Figure
   save_figure(fig, path)                   → standalone HTML
 
 Пакетная отрисовка всех датасетов из ``data/`` — команда CLI ``diplom wind-viz``.
@@ -26,21 +26,12 @@ import numpy as np
 import plotly.colors as pc
 import plotly.graph_objects as go
 import xarray as xr
-from scipy.interpolate import interp1d
 
-from diplom.geo import altitude_to_pressure_hpa, meters_per_deg_lat, meters_per_deg_lon
-from diplom.world import world_bounds_from_axes
-from diplom.wind.interp import omega_to_w_mps
+from diplom.geo import meters_per_deg_lat, meters_per_deg_lon
+from diplom.wind.interp import WindInterpolator
 
-# ──────────────────── Имена переменных ERA5 ────────────────────
+# ──────────────────── Имена переменных ERA5 (list_available_times) ────────────────────
 
-_U_VAR = "u"
-_V_VAR = "v"
-_W_VAR = "w"
-_T_VAR = "t"
-_LON_DIM = "longitude"
-_LAT_DIM = "latitude"
-_LEVEL_DIM = "pressure_level"
 _TIME_DIM = "valid_time"
 
 # Циклическая HSL-палитра по азимуту: 0° и 360° совпадают, противоположные направления контрастны.
@@ -184,29 +175,40 @@ def _altitude_targets_m(h_m: np.ndarray, step_m: float) -> np.ndarray:
     return pts
 
 
-def _interp_wind_vertical_to_altitude(
-    slice_: WindSlice,
-    h_targets_m: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Линейная интерполяция u, v, w между уровнями ERA5 на заданные высоты (м)."""
-    order = np.argsort(slice_.altitude.astype(np.float64))
-    h_asc = slice_.altitude[order].astype(np.float64)
-    u_asc = slice_.u[order, ...].astype(np.float64)
-    v_asc = slice_.v[order, ...].astype(np.float64)
-    w_asc = slice_.w[order, ...].astype(np.float64)
-    if h_asc.size == 1:
-        shp = (len(h_targets_m),) + tuple(u_asc.shape[1:])
-        return (
-            np.broadcast_to(u_asc[0], shp).astype(np.float32).copy(),
-            np.broadcast_to(v_asc[0], shp).astype(np.float32).copy(),
-            np.broadcast_to(w_asc[0], shp).astype(np.float32).copy(),
-        )
-    ht = np.clip(h_targets_m.astype(np.float64), h_asc[0], h_asc[-1])
-    kw = dict(axis=0, kind="linear", bounds_error=False, fill_value=(u_asc[0], u_asc[-1]))
-    u_i = interp1d(h_asc, u_asc, **kw)(ht).astype(np.float32)
-    v_i = interp1d(h_asc, v_asc, **kw)(ht).astype(np.float32)
-    w_i = interp1d(h_asc, w_asc, **kw)(ht).astype(np.float32)
-    return u_i, v_i, w_i
+def _sample_wind_on_grid(
+    interpolator: WindInterpolator,
+    time: np.datetime64,
+    *,
+    lat_deg: np.ndarray,
+    lon_deg: np.ndarray,
+    altitude_m: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Сэмплировать u, v, w и давление на 3D-сетке через ``WindInterpolator.batch_vector_at``."""
+    alt_3d, lat_3d, lon_3d = np.meshgrid(
+        altitude_m.astype(np.float64),
+        lat_deg.astype(np.float64),
+        lon_deg.astype(np.float64),
+        indexing="ij",
+    )
+    x_3d, y_3d = _lonlat_to_local_meters(
+        lon_3d,
+        lat_3d,
+        origin_lon=interpolator.origin_lon,
+        origin_lat=interpolator.origin_lat,
+    )
+    x_flat = x_3d.ravel()
+    y_flat = y_3d.ravel()
+    z_flat = alt_3d.ravel()
+    n_pts = x_flat.size
+    time_flat = np.full(n_pts, np.datetime64(time, "ns"), dtype="datetime64[ns]")
+
+    wind = interpolator.batch_vector_at(x_flat, y_flat, z_flat, time_flat)
+    grid_shape = alt_3d.shape
+    u = wind[:, 0].reshape(grid_shape).astype(np.float32)
+    v = wind[:, 1].reshape(grid_shape).astype(np.float32)
+    w = wind[:, 2].reshape(grid_shape).astype(np.float32)
+    pressure = interpolator._z_to_pressure(z_flat).reshape(grid_shape).astype(np.float32)
+    return u, v, w, pressure
 
 
 # ──────────────────── Конвертация давление → высота ────────────────────
@@ -229,11 +231,6 @@ def _pressure_to_altitude_m(pressure_hpa: np.ndarray) -> np.ndarray:
     return (T0 / L) * (1.0 - np.power(ratio, 1.0 / exp))
 
 
-def _default_origin(slice_: "WindSlice") -> tuple[float, float]:
-    """Брать опорную точку из фактической юго-западной границы среза."""
-    return float(slice_.origin_lat), float(slice_.origin_lon)
-
-
 def _lonlat_to_local_meters(
     lon: np.ndarray,
     lat: np.ndarray,
@@ -249,29 +246,6 @@ def _lonlat_to_local_meters(
     return x_m.astype(np.float32), y_m.astype(np.float32)
 
 
-# ──────────────────── Срез ветра ────────────────────
-
-
-@dataclass
-class WindSlice:
-    """Ветровое поле на одном временном шаге ERA5."""
-
-    lon: np.ndarray       # (nlon,)  градусы
-    lat: np.ndarray       # (nlat,)  градусы
-    origin_lon: float     # опорная долгота для локальной системы координат
-    origin_lat: float     # опорная широта для локальной системы координат
-    pressure: np.ndarray  # (nlevel,)  гПа (убывает → высота растёт)
-    altitude: np.ndarray  # (nlevel,)  метры (возрастает)
-    time: np.datetime64   # временна́я метка среза
-
-    # Ветровые компоненты — shape (nlevel, nlat, nlon)
-    u: np.ndarray     # западно-восточная, м/с
-    v: np.ndarray     # южно-северная, м/с
-    w: np.ndarray     # вертикальная (omega→м/с), м/с (+ = вверх)
-    speed_h: np.ndarray   # горизонтальная скорость sqrt(u²+v²), м/с
-    speed_3d: np.ndarray  # полная скорость sqrt(u²+v²+w²), м/с
-
-
 # ──────────────────── Список доступных временных меток ────────────────────
 
 
@@ -282,76 +256,20 @@ def list_available_times(path: Path) -> List[np.datetime64]:
     return [np.datetime64(t, "s") for t in times]
 
 
-# ──────────────────── Загрузка среза ────────────────────
-
-
-def load_wind_slice(path: Path, time_target: np.datetime64) -> WindSlice:
-    """Загрузить ветровой срез ERA5 на ближайшем к `time_target` шаге.
-
-    Args:
-        path: путь к NetCDF-файлу ERA5.
-        time_target: желаемая временна́я метка; будет выбран ближайший шаг.
-
-    Returns:
-        WindSlice с конвертированными ветровыми компонентами.
-    """
-    ds = xr.open_dataset(path)
-    try:
-        times_ns = ds[_TIME_DIM].values.astype("datetime64[ns]")
-        target_ns = np.datetime64(time_target, "ns")
-        time_idx = int(np.argmin(np.abs(times_ns - target_ns)))
-        actual_time = times_ns[time_idx].astype("datetime64[s]")
-
-        ds_t = ds.isel({_TIME_DIM: time_idx})
-
-        lon = ds_t[_LON_DIM].values.astype(np.float32)
-        lat = ds_t[_LAT_DIM].values.astype(np.float32)
-        pressure = ds_t[_LEVEL_DIM].values.astype(np.float32)
-
-        # Сортируем уровни: давление убывает (высота растёт)
-        p_order = np.argsort(pressure)[::-1]
-        pressure = pressure[p_order]
-
-        u_raw = ds_t[_U_VAR].values.astype(np.float32)[p_order]  # (nlevel, nlat, nlon)
-        v_raw = ds_t[_V_VAR].values.astype(np.float32)[p_order]
-        w_omega = ds_t[_W_VAR].values.astype(np.float32)[p_order]
-        t_raw = ds_t[_T_VAR].values.astype(np.float32)[p_order]
-
-        # omega (Па/с) → вертикальная скорость w (м/с)
-        p_3d = pressure[:, np.newaxis, np.newaxis] * np.ones_like(u_raw)
-        w_raw = omega_to_w_mps(w_omega, p_3d, t_raw)
-
-        u = np.nan_to_num(u_raw, nan=0.0, posinf=0.0, neginf=0.0)
-        v = np.nan_to_num(v_raw, nan=0.0, posinf=0.0, neginf=0.0)
-        w = np.nan_to_num(w_raw, nan=0.0, posinf=0.0, neginf=0.0)
-
-        altitude = _pressure_to_altitude_m(pressure).astype(np.float32)
-        speed_h = np.sqrt(u**2 + v**2).astype(np.float32)
-        speed_3d = np.sqrt(u**2 + v**2 + w**2).astype(np.float32)
-
-        return WindSlice(
-            lon=lon,
-            lat=lat,
-            origin_lon=float(lon.min()),
-            origin_lat=float(lat.min()),
-            pressure=pressure,
-            altitude=altitude,
-            time=np.datetime64(actual_time, "s"),
-            u=u,
-            v=v,
-            w=w,
-            speed_h=speed_h,
-            speed_3d=speed_3d,
-        )
-    finally:
-        ds.close()
+def resolve_wind_time(interpolator: WindInterpolator, time_target: np.datetime64) -> np.datetime64:
+    """Выбрать ближайший к ``time_target`` шаг из оси времени интерполятора."""
+    times_ns = interpolator.time_axis_ns.astype("datetime64[ns]")
+    target_ns = np.datetime64(time_target, "ns")
+    time_idx = int(np.argmin(np.abs(times_ns.astype(np.int64) - target_ns.astype(np.int64))))
+    return np.datetime64(int(interpolator.time_axis_ns[time_idx]), "ns").astype("datetime64[s]")
 
 
 # ──────────────────── Построение 3D-графика ────────────────────
 
 
 def build_wind_figure(
-    slice_: WindSlice,
+    interpolator: WindInterpolator,
+    time: np.datetime64,
     title: Optional[str] = None,
     stride_lon: int = 1,
     stride_lat: int = 1,
@@ -378,12 +296,13 @@ def build_wind_figure(
       • Tooltip            → u, v, w (реальные), скорость, давление, высота, азимут.
 
     Args:
-        slice_:       срез ERA5, полученный через `load_wind_slice`.
+        interpolator: интерполятор ERA5 (тот же, что в обучении и симуляции).
+        time:         временна́я метка среза; клампится к диапазону датасета.
         title:        заголовок графика.
         stride_lon:   прореживание по долготе (1 = брать каждую точку).
         stride_lat:   прореживание по широте.
         stride_altitude_m: шаг сетки отрисовки по высоте в **метрах** (равномерно по оси Z).
-                           Поля u, v, w линейно интерполируются между исходными уровнями ERA5 по высоте.
+                           u, v, w берутся через ``WindInterpolator.batch_vector_at`` (4D-интерполяция).
         w_scale:      масштаб вертикальной компоненты для наглядности.
         cone_sizeref: общий масштаб размера конусов Plotly; меньше значение = больше конусы.
         cone_azimuth_colorscale: циклическая палитра [[0,color],…,[1,color]] или имя Plotly; по умолчанию HSL-колесо.
@@ -395,36 +314,34 @@ def build_wind_figure(
         altitude_unit: «km» или «m» — единицы на оси Z.
         origin_lat/origin_lon: опорная точка для локальных метровых координат (границы сцены как у `WindInterpolator.world_bounds`).
     """
-    # ── Вертикаль: равномерная сетка по высоте (м), интерполяция ветра по h ──
-    h_targets = _altitude_targets_m(slice_.altitude, float(stride_altitude_m))
-    u_full, v_full, w_full = _interp_wind_vertical_to_altitude(slice_, h_targets)
+    plot_time = np.datetime64(time, "ns")
+    lat_axis = np.asarray(interpolator.latitude_axis_deg, dtype=np.float64)
+    lon_axis = np.asarray(interpolator.longitude_axis_deg, dtype=np.float64)
+    altitude_axis = _pressure_to_altitude_m(interpolator.pressure_axis_hpa).astype(np.float64)
+
+    # ── Равномерная сетка по высоте (м), ветер через batch_vector_at ──
+    h_targets = _altitude_targets_m(altitude_axis, float(stride_altitude_m))
     alt_sub = h_targets.astype(np.float32)
-    pressure_sub_hpa = altitude_to_pressure_hpa(alt_sub.astype(np.float64))
-    speed_sub = np.sqrt(u_full**2 + v_full**2).astype(np.float32)
 
     # ── Прореживание по горизонтали ──────────────────────────────────────
-    la_idx = np.arange(0, len(slice_.lat), max(1, stride_lat))
-    lo_idx = np.arange(0, len(slice_.lon), max(1, stride_lon))
+    la_idx = np.arange(0, len(lat_axis), max(1, stride_lat))
+    lo_idx = np.arange(0, len(lon_axis), max(1, stride_lon))
+    lat_sub = lat_axis[la_idx]
+    lon_sub = lon_axis[lo_idx]
 
-    u_sub = u_full[:, la_idx, :][:, :, lo_idx]
-    v_sub = v_full[:, la_idx, :][:, :, lo_idx]
-    w_sub = w_full[:, la_idx, :][:, :, lo_idx]
-    speed_sub = speed_sub[:, la_idx, :][:, :, lo_idx]
-    pressure_sub = pressure_sub_hpa[:, np.newaxis, np.newaxis] * np.ones_like(u_sub, dtype=np.float32)
-    lat_sub = slice_.lat[la_idx]
-    lon_sub = slice_.lon[lo_idx]
-
-    default_origin_lat, default_origin_lon = _default_origin(slice_)
-    origin_lat = float(origin_lat) if origin_lat is not None else default_origin_lat
-    origin_lon = float(origin_lon) if origin_lon is not None else default_origin_lon
-
-    world_bounds_xy = world_bounds_from_axes(
-        np.asarray(slice_.lat, dtype=np.float64),
-        np.asarray(slice_.lon, dtype=np.float64),
-        origin_lat=origin_lat,
-        origin_lon=origin_lon,
-        pressure_axis_hpa=np.asarray(slice_.pressure, dtype=np.float64),
+    u_sub, v_sub, w_sub, pressure_sub = _sample_wind_on_grid(
+        interpolator,
+        plot_time,
+        lat_deg=lat_sub,
+        lon_deg=lon_sub,
+        altitude_m=h_targets,
     )
+    speed_sub = np.sqrt(u_sub**2 + v_sub**2).astype(np.float32)
+
+    origin_lat = float(origin_lat) if origin_lat is not None else float(interpolator.origin_lat)
+    origin_lon = float(origin_lon) if origin_lon is not None else float(interpolator.origin_lon)
+
+    world_bounds_xy = interpolator.world_bounds
     x_lo, x_hi = _ensure_scene_axis_range(world_bounds_xy.x_min, world_bounds_xy.x_max)
     y_lo, y_hi = _ensure_scene_axis_range(world_bounds_xy.y_min, world_bounds_xy.y_max)
     z_lo_m, z_hi_m = _ensure_scene_axis_range(world_bounds_xy.z_min, world_bounds_xy.z_max, min_half_width_m=200.0)
@@ -518,7 +435,7 @@ def build_wind_figure(
     auto_title = (
         title
         if title is not None
-        else f"Поле ветра ERA5 · {slice_.time}"
+        else f"Поле ветра ERA5 · {np.datetime64(plot_time, 's')}"
     )
 
     fig = go.Figure()
@@ -699,7 +616,6 @@ class WindPlotRenderResult:
 def render_wind_plot_job(job: WindPlotRenderJob) -> WindPlotRenderResult:
     """Построить и сохранить график для одного датасета (отдельный процесс)."""
     from diplom.data.era5_paths import era5_dataset_title, wind_plot_html_path
-    from diplom.world import world_bounds_from_axes
 
     name = job.dataset_path.name
     plot_path = wind_plot_html_path(job.dataset_path, job.output_dir)
@@ -729,35 +645,35 @@ def render_wind_plot_job(job: WindPlotRenderJob) -> WindPlotRenderResult:
         else:
             target_time = np.datetime64(job.time_ns, "ns")
 
-        logs.append(f"Загружаю срез ERA5: {job.dataset_path} @ {target_time} …")
-        wind_slice = load_wind_slice(job.dataset_path, target_time)
-        logs.append(
-            f"Срез загружен · {name} · время={wind_slice.time} "
-            f"· уровней={len(wind_slice.pressure)} "
-            f"· lat={len(wind_slice.lat)} · lon={len(wind_slice.lon)}"
-        )
+        logs.append(f"Загружаю интерполятор ERA5: {job.dataset_path} @ {target_time} …")
+        interpolator = WindInterpolator.from_file(job.dataset_path)
+        try:
+            plot_time = resolve_wind_time(interpolator, target_time)
+            logs.append(
+                f"Интерполятор готов · {name} · время={plot_time} "
+                f"· уровней={len(interpolator.pressure_axis_hpa)} "
+                f"· lat={len(interpolator.latitude_axis_deg)} "
+                f"· lon={len(interpolator.longitude_axis_deg)}"
+            )
 
-        wb = world_bounds_from_axes(
-            np.asarray(wind_slice.lat, dtype=np.float64),
-            np.asarray(wind_slice.lon, dtype=np.float64),
-            origin_lat=wind_slice.origin_lat,
-            origin_lon=wind_slice.origin_lon,
-            pressure_axis_hpa=np.asarray(wind_slice.pressure, dtype=np.float64),
-        )
-        logs.append(
-            f"[wind-viz] {name} · X [{wb.x_min:.1f} … {wb.x_max:.1f}] м · "
-            f"Y [{wb.y_min:.1f} … {wb.y_max:.1f}] м · "
-            f"Z [{wb.z_min:.1f} … {wb.z_max:.1f}] м"
-        )
+            wb = interpolator.world_bounds
+            logs.append(
+                f"[wind-viz] {name} · X [{wb.x_min:.1f} … {wb.x_max:.1f}] м · "
+                f"Y [{wb.y_min:.1f} … {wb.y_max:.1f}] м · "
+                f"Z [{wb.z_min:.1f} … {wb.z_max:.1f}] м"
+            )
 
-        fig = build_wind_figure(
-            wind_slice,
-            title=era5_dataset_title(job.dataset_path),
-            stride_lon=job.stride_lon,
-            stride_lat=job.stride_lat,
-            stride_altitude_m=job.stride_altitude_m,
-            w_scale=job.w_scale,
-        )
+            fig = build_wind_figure(
+                interpolator,
+                plot_time,
+                title=era5_dataset_title(job.dataset_path),
+                stride_lon=job.stride_lon,
+                stride_lat=job.stride_lat,
+                stride_altitude_m=job.stride_altitude_m,
+                w_scale=job.w_scale,
+            )
+        finally:
+            interpolator.close()
         save_figure(fig, plot_path)
         logs.append(f"График сохранён: {plot_path}")
         return WindPlotRenderResult(
