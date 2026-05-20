@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from stable_baselines3.common.callbacks import BaseCallback
 
+from diplom.train.env_info_log_keys import ENV_INFO_LOG_KEYS
+
 
 class InfoLoggingCallback(BaseCallback):
     """Собирает выбранные скалярные поля `info` и пишет mean за rollout в TensorBoard.
@@ -13,7 +15,7 @@ class InfoLoggingCallback(BaseCallback):
     В stdout метрики не попадают — только TensorBoard.
     """
 
-    _KEYS = ("distance_to_target", "horizontal_distance", "progress_reward", "reward_boundary_term")
+    _KEYS = ENV_INFO_LOG_KEYS
 
     def __init__(self, prefix: str = "env") -> None:
         super().__init__(verbose=0)

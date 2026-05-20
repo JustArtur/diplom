@@ -89,6 +89,11 @@ def era5_dataset_title(path: Path) -> str:
     return path.stem
 
 
+def training_logdir_for_dataset(dataset_path: Path, parent_logdir: Path) -> Path:
+    """Каталог артефактов обучения: ``{parent_logdir}/{имя_датасета}``."""
+    return parent_logdir / dataset_path.stem
+
+
 def wind_plot_html_path(dataset_path: Path, output_dir: Path) -> Path:
     """Путь к HTML-графику ветра для датасета: {output_dir}/{stem}.html."""
     return output_dir / f"{dataset_path.stem}.html"

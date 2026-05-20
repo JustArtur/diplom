@@ -17,7 +17,7 @@ from diplom.viz.trajectory_plot import (
     apply_figure_layout,
     build_episode_traces,
     compute_trajectory_bounds_from_extents,
-    save_figure,
+    save_live_figure,
 )
 from diplom.train.trajectory_steps_io import (
     EpisodeFileRef,
@@ -249,7 +249,11 @@ def _render_snapshot(
                 num_timesteps=request.num_timesteps,
                 episode_count=request.episode_counts.get(env_idx, 0),
             )
-            save_figure(fig, output_dir / f"env_{env_idx:03d}.html")
+            save_live_figure(
+                fig,
+                output_dir / f"env_{env_idx:03d}.html",
+                revision=request.num_timesteps,
+            )
         finally:
             del history_items, current_env_steps
 

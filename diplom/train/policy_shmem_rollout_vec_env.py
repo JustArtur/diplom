@@ -25,9 +25,13 @@ from stable_baselines3.common.vec_env.base_vec_env import (
 from stable_baselines3.common.vec_env.patch_gym import _patch_env
 from stable_baselines3.common.vec_env.subproc_vec_env import _stack_obs
 
+from diplom.train.env_info_log_keys import ENV_INFO_LOG_KEYS, INFO_KEY_INDEX, N_ENV_INFO_KEYS
 from diplom.train.policy_rollout_worker import build_worker_policy, prepare_env_action
 
 _INFO_NAN = np.float32(np.nan)
+_INFO_WRITE_ITEMS: tuple[tuple[int, str], ...] = tuple(
+    (INFO_KEY_INDEX[key], key) for key in ENV_INFO_LOG_KEYS
+)
 
 
 def _create_shared_array(shape: tuple[int, ...], dtype: np.dtype) -> tuple[shared_memory.SharedMemory, np.ndarray]:
@@ -56,8 +60,7 @@ class _RolloutShmemNames:
     final_observations: str
     time_limit_truncated: str
     terminal_observations: str
-    distance_to_target: str
-    progress_reward: str
+    info_scalars: str
     episode_return: str
     episode_length: str
     episode_success: str
@@ -68,8 +71,7 @@ def _write_info_scalars(
     step_idx: int,
     env_idx: int,
     info: dict[str, Any],
-    distance_to_target: np.ndarray,
-    progress_reward: np.ndarray,
+    info_scalars: np.ndarray,
     episode_return: np.ndarray,
     episode_length: np.ndarray,
     episode_success: np.ndarray,
@@ -78,12 +80,11 @@ def _write_info_scalars(
     done: bool,
     terminal_obs: Any,
 ) -> None:
-    distance = info.get("distance_to_target")
-    if distance is not None:
-        distance_to_target[env_idx, step_idx] = np.float32(distance)
-    progress = info.get("progress_reward")
-    if progress is not None:
-        progress_reward[env_idx, step_idx] = np.float32(progress)
+    row = info_scalars[env_idx, step_idx]
+    for idx, key in _INFO_WRITE_ITEMS:
+        value = info.get(key)
+        if value is not None:
+            row[idx] = np.float32(value)
     episode = info.get("episode")
     if episode is not None:
         episode_return[env_idx, step_idx] = np.float32(episode["r"])
@@ -113,8 +114,7 @@ def _collect_rollout_into_shmem(
     final_observations: np.ndarray,
     time_limit_truncated: np.ndarray,
     terminal_observations: np.ndarray,
-    distance_to_target: np.ndarray,
-    progress_reward: np.ndarray,
+    info_scalars: np.ndarray,
     episode_return: np.ndarray,
     episode_length: np.ndarray,
     episode_success: np.ndarray,
@@ -124,8 +124,7 @@ def _collect_rollout_into_shmem(
     episode_start = initial_episode_start
     final_reset_info: dict[str, Any] = {}
 
-    distance_to_target[env_idx, :n_steps] = _INFO_NAN
-    progress_reward[env_idx, :n_steps] = _INFO_NAN
+    info_scalars[env_idx, :n_steps, :] = _INFO_NAN
     episode_return[env_idx, :n_steps] = _INFO_NAN
     episode_length[env_idx, :n_steps] = _INFO_NAN
     episode_success[env_idx, :n_steps] = _INFO_NAN
@@ -159,8 +158,7 @@ def _collect_rollout_into_shmem(
                 step_idx=step_idx,
                 env_idx=env_idx,
                 info=info,
-                distance_to_target=distance_to_target,
-                progress_reward=progress_reward,
+                info_scalars=info_scalars,
                 episode_return=episode_return,
                 episode_length=episode_length,
                 episode_success=episode_success,
@@ -206,10 +204,11 @@ def _policy_shmem_rollout_worker(
         shmem_names.time_limit_truncated, (n_envs, rollout_steps), np.bool_
     )
     term_shm, terminal_observations = _attach_shared_array(shmem_names.terminal_observations, term_obs_shape, np.float32)
-    dist_shm, distance_to_target = _attach_shared_array(
-        shmem_names.distance_to_target, (n_envs, rollout_steps), np.float32
+    info_shm, info_scalars = _attach_shared_array(
+        shmem_names.info_scalars,
+        (n_envs, rollout_steps, N_ENV_INFO_KEYS),
+        np.float32,
     )
-    prog_shm, progress_reward = _attach_shared_array(shmem_names.progress_reward, (n_envs, rollout_steps), np.float32)
     ep_ret_shm, episode_return = _attach_shared_array(shmem_names.episode_return, (n_envs, rollout_steps), np.float32)
     ep_len_shm, episode_length = _attach_shared_array(shmem_names.episode_length, (n_envs, rollout_steps), np.float32)
     ep_succ_shm, episode_success = _attach_shared_array(shmem_names.episode_success, (n_envs, rollout_steps), np.float32)
@@ -225,8 +224,7 @@ def _policy_shmem_rollout_worker(
         final_shm,
         trunc_shm,
         term_shm,
-        dist_shm,
-        prog_shm,
+        info_shm,
         ep_ret_shm,
         ep_len_shm,
         ep_succ_shm,
@@ -272,8 +270,7 @@ def _policy_shmem_rollout_worker(
                         final_observations=final_observations,
                         time_limit_truncated=time_limit_truncated,
                         terminal_observations=terminal_observations,
-                        distance_to_target=distance_to_target,
-                        progress_reward=progress_reward,
+                        info_scalars=info_scalars,
                         episode_return=episode_return,
                         episode_length=episode_length,
                         episode_success=episode_success,
@@ -363,8 +360,10 @@ class PolicyShmemSubprocVecEnv(VecEnv):
         final_shm, self.final_observations = _create_shared_array((n_envs, *obs_shape), np.float32)
         trunc_shm, self.time_limit_truncated = _create_shared_array((n_envs, self.rollout_steps), np.bool_)
         term_shm, self.terminal_observations = _create_shared_array(term_obs_shape, np.float32)
-        dist_shm, self.distance_to_target = _create_shared_array((n_envs, self.rollout_steps), np.float32)
-        prog_shm, self.progress_reward = _create_shared_array((n_envs, self.rollout_steps), np.float32)
+        info_shm, self.info_scalars = _create_shared_array(
+            (n_envs, self.rollout_steps, N_ENV_INFO_KEYS),
+            np.float32,
+        )
         ep_ret_shm, self.episode_return = _create_shared_array((n_envs, self.rollout_steps), np.float32)
         ep_len_shm, self.episode_length = _create_shared_array((n_envs, self.rollout_steps), np.float32)
         ep_succ_shm, self.episode_success = _create_shared_array((n_envs, self.rollout_steps), np.float32)
@@ -381,8 +380,7 @@ class PolicyShmemSubprocVecEnv(VecEnv):
                 final_shm,
                 trunc_shm,
                 term_shm,
-                dist_shm,
-                prog_shm,
+                info_shm,
                 ep_ret_shm,
                 ep_len_shm,
                 ep_succ_shm,
@@ -399,8 +397,7 @@ class PolicyShmemSubprocVecEnv(VecEnv):
             final_observations=final_shm.name,
             time_limit_truncated=trunc_shm.name,
             terminal_observations=term_shm.name,
-            distance_to_target=dist_shm.name,
-            progress_reward=prog_shm.name,
+            info_scalars=info_shm.name,
             episode_return=ep_ret_shm.name,
             episode_length=ep_len_shm.name,
             episode_success=ep_succ_shm.name,
@@ -444,16 +441,7 @@ class PolicyShmemSubprocVecEnv(VecEnv):
         """Срез rollout по шагу из shared memory (без pickle)."""
         infos: list[dict[str, Any]] = []
         for env_idx in range(self.num_envs):
-            info: dict[str, Any] = {}
-            distance = self.distance_to_target[env_idx, step_idx]
-            if not np.isnan(distance):
-                info["distance_to_target"] = float(distance)
-            progress = self.progress_reward[env_idx, step_idx]
-            if not np.isnan(progress):
-                info["progress_reward"] = float(progress)
-            if self.time_limit_truncated[env_idx, step_idx]:
-                info["TimeLimit.truncated"] = True
-                info["terminal_observation"] = self.terminal_observations[env_idx, step_idx]
+            info = self._info_dict(env_idx, step_idx)
             ep_r = self.episode_return[env_idx, step_idx]
             if not np.isnan(ep_r):
                 info["episode"] = {
@@ -496,12 +484,11 @@ class PolicyShmemSubprocVecEnv(VecEnv):
 
     def _info_dict(self, env_idx: int, step_idx: int) -> dict[str, Any]:
         info: dict[str, Any] = {}
-        distance = self.distance_to_target[env_idx, step_idx]
-        if not np.isnan(distance):
-            info["distance_to_target"] = float(distance)
-        progress = self.progress_reward[env_idx, step_idx]
-        if not np.isnan(progress):
-            info["progress_reward"] = float(progress)
+        row = self.info_scalars[env_idx, step_idx]
+        for key, idx in INFO_KEY_INDEX.items():
+            value = row[idx]
+            if not np.isnan(value):
+                info[key] = float(value)
         if self.time_limit_truncated[env_idx, step_idx]:
             info["TimeLimit.truncated"] = True
             info["terminal_observation"] = self.terminal_observations[env_idx, step_idx]

@@ -19,6 +19,8 @@ class ExportResult:
     source: Path
     output: Path
     rows: int
+    summary_txt: Path | None = None
+    summary_json: Path | None = None
 
 
 def _scalar_from_summary_value(value: object) -> float | None:
@@ -46,8 +48,15 @@ def _iter_scalar_rows(event_path: Path) -> Iterator[tuple[str, int, float, float
             yield value.tag, step, scalar, wall_time  # type: ignore[attr-defined]
 
 
-def export_event_file(event_path: Path, *, output_path: Path | None = None) -> ExportResult:
+def export_event_file(
+    event_path: Path,
+    *,
+    output_path: Path | None = None,
+    write_summary: bool = True,
+) -> ExportResult:
     """Пишет ``{event_file}.scalars.csv`` рядом с исходным файлом."""
+    from diplom.train.tensorboard_summary import write_scalars_summary
+
     event_path = event_path.resolve()
     if not event_path.is_file():
         raise FileNotFoundError(f"Не найден файл событий TensorBoard: {event_path}")
@@ -61,7 +70,18 @@ def export_event_file(event_path: Path, *, output_path: Path | None = None) -> E
             writer.writerow(row)
             rows += 1
 
-    return ExportResult(source=event_path, output=out, rows=rows)
+    summary_txt: Path | None = None
+    summary_json: Path | None = None
+    if write_summary and rows > 0:
+        summary_txt, summary_json = write_scalars_summary(out)
+
+    return ExportResult(
+        source=event_path,
+        output=out,
+        rows=rows,
+        summary_txt=summary_txt,
+        summary_json=summary_json,
+    )
 
 
 def find_event_files(root: Path, *, recursive: bool = True) -> list[Path]:
@@ -81,6 +101,7 @@ def export_tensorboard_path(
     path: Path,
     *,
     recursive: bool = True,
+    write_summary: bool = True,
 ) -> list[ExportResult]:
     """Экспортирует все ``events.out.tfevents.*`` под ``path`` (или один файл)."""
     event_files = find_event_files(path, recursive=recursive)
@@ -89,4 +110,6 @@ def export_tensorboard_path(
             f"Нет файлов {EVENT_FILE_GLOB} в {path.resolve()}"
             + (" (попробуйте --recursive)" if not recursive else "")
         )
-    return [export_event_file(event_path) for event_path in event_files]
+    return [
+        export_event_file(event_path, write_summary=write_summary) for event_path in event_files
+    ]

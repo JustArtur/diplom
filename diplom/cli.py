@@ -25,9 +25,12 @@ from diplom.config import (
 )
 from diplom.data.era5_paths import (
     DEFAULT_ERA5_DATA_DIR,
+    DEFAULT_ERA5_OUTFILE,
     era5_outfile_for_bounds,
+    era5_dataset_title,
     list_era5_datasets,
     resolve_era5_dataset_path,
+    training_logdir_for_dataset,
     wind_plot_html_path,
 )
 
@@ -42,11 +45,15 @@ DEFAULT_DOWNLOAD_CONFIG = DownloadConfig()
 DEFAULT_ENVIRONMENT_CONFIG = EnvironmentConfig()
 DEFAULT_TRAINING_CONFIG = TrainingConfig()
 DEFAULT_VISUALIZATION_CONFIG = VisualizationConfig()
-DEFAULT_ROLLOUT_MODEL_PATH = DEFAULT_TRAINING_CONFIG.logdir / "ppo_model.zip"
+DEFAULT_ROLLOUT_MODEL_PATH = (
+    DEFAULT_TRAINING_CONFIG.logdir
+    / era5_dataset_title(DEFAULT_ERA5_OUTFILE)
+    / "ppo_model.zip"
+)
 
-_RUN_NAME_HELP = (
-    "Имя run-а; каталог будет {имя}#PPO_N (индекс как обычно по порядку). "
-    "Без флага — PPO_N"
+_LOGDIR_HELP = (
+    "Родительский каталог; артефакты пишутся в {logdir}/{имя_датасета}/ "
+    "(имя датасета — NetCDF без .nc)."
 )
 
 _START_TIME_HELP = (
@@ -97,6 +104,8 @@ def _build_app_config(
     if dataset is not None:
         wind = replace(wind, path=resolve_era5_dataset_path(dataset, data_dir=data_dir))
 
+    effective_logdir = training_logdir_for_dataset(wind.path, logdir)
+
     return AppConfig(
         wind=wind,
         environment=EnvironmentConfig(
@@ -108,7 +117,7 @@ def _build_app_config(
         training=TrainingConfig(
             total_timesteps=total_timesteps,
             seed=seed,
-            logdir=logdir,
+            logdir=effective_logdir,
             n_envs=n_envs,
             device=device,
             verbose=verbose,
@@ -230,7 +239,7 @@ def train_ppo(
         DEFAULT_TRAINING_CONFIG.logdir,
         "--logdir",
         "-l",
-        help="Каталог для артефактов обучения",
+        help=_LOGDIR_HELP,
     ),
     n_envs: int = typer.Option(DEFAULT_TRAINING_CONFIG.n_envs, "--envs", "-e", help="Количество параллельных сред"),
     device: str = typer.Option(
@@ -276,22 +285,12 @@ def train_ppo(
         "-v",
         help="Уровень логирования PPO в консоль (SB3): 0 — тихо, 1 — таблица метрик; env-метрики только в TensorBoard",
     ),
-    run_name: Optional[str] = typer.Option(
-        None,
-        "--run-name",
-        help=_RUN_NAME_HELP,
-    ),
     resume: bool = typer.Option(
         False,
         "--resume",
-        help="Продолжить из runs/ppo/ppo_model.zip (без флага — новая модель)",
-    ),
-    continue_tensorboard: bool = typer.Option(
-        False,
-        "--continue-tensorboard/--new-tensorboard-run",
         help=(
-            "При --resume дописывать TensorBoard в последний PPO_N "
-            "(с учётом --run-name; иначе — новый каталог run-а)"
+            "Продолжить из {logdir}/{датасет}/ppo_model.zip: та же модель, тот же PPO_N, "
+            "счётчик шагов и кривая TensorBoard без сброса"
         ),
     ),
     dataset: Optional[str] = typer.Option(
@@ -331,9 +330,7 @@ def train_ppo(
             app_config,
             force_dummy_vec_env=in_process,
             enable_trajectory_viz=trajectories,
-            run_name=run_name,
             resume=resume,
-            continue_tensorboard=continue_tensorboard,
         )
     except ValueError as exc:
         typer.echo(str(exc), err=True)
@@ -353,11 +350,16 @@ def export_tensorboard(
         "--recursive/--no-recursive",
         help="Искать event-файлы в подкаталогах",
     ),
+    summary: bool = typer.Option(
+        True,
+        "--summary/--no-summary",
+        help="Сводка ключевых метрик в .scalars.summary.txt/.json",
+    ),
 ) -> None:
     """Экспорт scalar-метрик TensorBoard в CSV рядом с каждым event-файлом.
 
     Создаёт файлы вида ``events.out.tfevents.<id>.scalars.csv`` с колонками:
-    tag, step, value, wall_time.
+    tag, step, value, wall_time и сводку ``*.scalars.summary.txt`` / ``*.scalars.summary.json``.
 
     \b
     Примеры:
@@ -369,13 +371,17 @@ def export_tensorboard(
     from diplom.train.tensorboard_export import export_tensorboard_path
 
     try:
-        results = export_tensorboard_path(path, recursive=recursive)
+        results = export_tensorboard_path(path, recursive=recursive, write_summary=summary)
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
     for item in results:
         typer.echo(f"{item.output}  ({item.rows} строк, из {item.source.name})")
+        if item.summary_txt is not None:
+            typer.echo(f"{item.summary_txt}")
+        if item.summary_json is not None:
+            typer.echo(f"{item.summary_json}")
 
 
 # ──────────────────── profile_ppo_mem / profile_ppo_cpu ────────────────────
@@ -419,7 +425,7 @@ def profile_ppo_mem(
         DEFAULT_TRAINING_CONFIG.profile_logdir,
         "--logdir",
         "-l",
-        help="Каталог run-ов обучения (PPO_N/tb, PPO_N/trajectories)",
+        help=_LOGDIR_HELP,
     ),
     device: str = typer.Option(
         DEFAULT_TRAINING_CONFIG.device,
@@ -481,11 +487,6 @@ def profile_ppo_mem(
         "--main-policy-rollout",
         help="Policy+step в main (без гибрида worker+shmem)",
     ),
-    run_name: Optional[str] = typer.Option(
-        None,
-        "--run-name",
-        help=_RUN_NAME_HELP,
-    ),
 ) -> None:
     """Профиль памяти при обучении PPO (memray).
 
@@ -534,7 +535,6 @@ def profile_ppo_mem(
             print_table=not no_table,
             multiprocess=not single_process,
             profile_targets=profile_targets,
-            run_name=run_name,
         )
     except MemrayNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -569,7 +569,7 @@ def profile_ppo_cpu(
         DEFAULT_TRAINING_CONFIG.profile_logdir,
         "--logdir",
         "-l",
-        help="Каталог run-ов обучения (PPO_N/tb, PPO_N/trajectories)",
+        help=_LOGDIR_HELP,
     ),
     device: str = typer.Option(
         DEFAULT_TRAINING_CONFIG.device,
@@ -634,11 +634,6 @@ def profile_ppo_cpu(
         "--main-policy-rollout",
         help="Policy+step в main (без гибрида worker+shmem)",
     ),
-    run_name: Optional[str] = typer.Option(
-        None,
-        "--run-name",
-        help=_RUN_NAME_HELP,
-    ),
 ) -> None:
     """Профиль CPU (cProfile) при обучении PPO.
 
@@ -682,7 +677,6 @@ def profile_ppo_cpu(
             multiprocess=not single_process,
             profile_targets=profile_targets,
             print_stats=not no_stats,
-            run_name=run_name,
         )
     except ValueError as exc:
         typer.echo(str(exc), err=True)
@@ -879,11 +873,17 @@ def wind_viz(
         help="Число процессов для параллельной отрисовки. "
         "По умолчанию: min(число новых графиков, число CPU).",
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Пересоздать HTML-графики, даже если они уже существуют",
+    ),
 ) -> None:
     """Построить интерактивные 3D-графы поля ветра ERA5.
 
     По умолчанию обходит все ``*.nc`` в ``data/`` и сохраняет HTML в ``runs/wind/``.
-    Заголовок графика совпадает с именем датасета; уже существующие файлы пропускаются.
+    Заголовок графика совпадает с именем датасета; уже существующие файлы пропускаются
+    (используйте ``--force`` для пересоздания).
 
     Примеры:
 
@@ -902,6 +902,10 @@ def wind_viz(
     \b
       # Один файл, конкретное время
       diplom wind-viz -f data/era5_....nc --time 2024-07-01T12:00:00 --stride-lat 2
+
+    \b
+      # Пересоздать все графики (игнорировать уже существующие)
+      diplom wind-viz --force
     """
     from diplom.viz.wind_plot import (
         WindPlotRenderJob,
@@ -942,9 +946,11 @@ def wind_viz(
     jobs: list[WindPlotRenderJob] = []
     for dataset_path in dataset_paths:
         plot_path = wind_plot_html_path(dataset_path, output)
-        if plot_path.exists():
+        if plot_path.exists() and not force:
             typer.echo(f"Пропуск {dataset_path.name}: график уже есть → {plot_path}")
             continue
+        if plot_path.exists() and force:
+            typer.echo(f"Пересоздаю {dataset_path.name}: --force → {plot_path}")
         jobs.append(
             WindPlotRenderJob(
                 dataset_path=dataset_path,
@@ -954,6 +960,7 @@ def wind_viz(
                 stride_lat=stride_lat,
                 stride_altitude_m=stride_altitude_m,
                 w_scale=w_scale,
+                force=force,
             )
         )
 
@@ -968,6 +975,7 @@ def wind_viz(
     results = render_wind_plots(jobs, workers=n_workers)
     saved_paths: list[Path] = []
     errors: list[str] = []
+    steerability_rows: list[tuple[str, float, float, float, float, float | None]] = []
 
     for result in results:
         for line in result.log_lines:
@@ -976,6 +984,37 @@ def wind_viz(
             errors.append(result.error)
         elif result.saved and result.plot_path is not None:
             saved_paths.append(result.plot_path)
+        if result.steerability_stats is not None:
+            stats = result.steerability_stats
+            steerability_rows.append(
+                (
+                    result.dataset_name,
+                    stats.steerability_score,
+                    stats.d_local,
+                    stats.heading_diversity,
+                    stats.curvature_richness,
+                    stats.temporal_persistence,
+                )
+            )
+
+    if len(steerability_rows) > 1:
+        typer.echo("")
+        typer.echo(
+            "Сравнение датасетов по Steerability Score (выше — лучше для RL-обучения):"
+        )
+        typer.echo(
+            f"{'Датасет':<42} {'Score':>6} {'D_loc':>6} {'H':>6} {'C':>6} {'T':>6}"
+        )
+        for name, score, d_local, heading, curvature, temporal in sorted(
+            steerability_rows,
+            key=lambda row: row[1],
+            reverse=True,
+        ):
+            t_text = f"{100.0 * temporal:5.1f}" if temporal is not None else "  n/a"
+            typer.echo(
+                f"{name:<42} {100.0 * score:5.1f} {100.0 * d_local:5.1f} "
+                f"{100.0 * heading:5.1f} {100.0 * curvature:5.1f} {t_text}"
+            )
 
     if errors:
         for msg in errors:

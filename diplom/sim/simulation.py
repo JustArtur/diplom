@@ -14,7 +14,7 @@ from diplom.sim.constants import (
     GAS_CONSTANT,
     GRAVITY_ACCELERATION,
 )
-from diplom.shared_constants import MAX_VERTICAL_SPEED
+from diplom.shared_constants import BALLOON_MAX_ALTITUDE, MAX_VERTICAL_SPEED
 from diplom.world import WorldBounds
 from diplom.wind.interp import WindInterpolator, WindSample
 
@@ -71,6 +71,7 @@ class Simulation:
         self._y_max = float(wb.y_max)
         self._z_min = float(wb.z_min)
         self._z_max = float(wb.z_max)
+        self._balloon_max_altitude = float(BALLOON_MAX_ALTITUDE)
         self._time_min_ns = int(self.wind_interp.time_min.astype("datetime64[ns]"))
         self._time_max_ns = int(self.wind_interp.time_max.astype("datetime64[ns]"))
         self._time_min = self.wind_interp.time_min
@@ -113,6 +114,19 @@ class Simulation:
         self.position[1] = np.float32(self._clamp_scalar(proposed_y, self._y_min, self._y_max))
         self.position[2] = np.float32(self._clamp_scalar(proposed_z, self._z_min, self._z_max))
 
+    def _is_outside_world_bounds(self, proposed_x: float, proposed_y: float, proposed_z: float) -> bool:
+        return (
+            proposed_x < self._x_min
+            or proposed_x > self._x_max
+            or proposed_y < self._y_min
+            or proposed_y > self._y_max
+            or proposed_z < self._z_min
+            or proposed_z > self._z_max
+        )
+
+    def _is_above_balloon_ceiling(self, altitude_m: float) -> bool:
+        return altitude_m > self._balloon_max_altitude
+
     def _limit_vertical_speed(self) -> None:
         vs = float(self.vertical_speed)
         limit = self._max_vertical_speed
@@ -149,22 +163,16 @@ class Simulation:
         proposed_x = self.position[0] + np.float32(wind.u) * dt
         proposed_y = self.position[1] + np.float32(wind.v) * dt
         proposed_z = self.position[2] + self.vertical_speed * dt
-        self.last_step_boundary_contact = (
-            float(proposed_x) < self._x_min
-            or float(proposed_x) > self._x_max
-            or float(proposed_y) < self._y_min
-            or float(proposed_y) > self._y_max
-            or float(proposed_z) < self._z_min
-            or float(proposed_z) > self._z_max
+        px, py, pz = float(proposed_x), float(proposed_y), float(proposed_z)
+        self.last_step_boundary_contact = self._is_above_balloon_ceiling(float(self.position[2])) or (
+            self._is_above_balloon_ceiling(pz)
         )
-        if not self._warned_world_bounds and self.last_step_boundary_contact:
-            True
-        ):
+        if not self._warned_world_bounds and self._is_outside_world_bounds(px, py, pz):
             self._warned_world_bounds = True
             env_label = f"env_{self.env_idx:03d}" if self.env_idx is not None else "env"
             warnings.warn(
                 (
-                    f"[{env_label}] Аэростат вышел за границы симуляционного мира; "
+                    f"[{env_label}] Аэростат вышел за границы датасета ERA5; "
                     f"координаты будут клампиться к диапазону "
                     f"[{self._x_min:.0f}, {self._x_max:.0f}] м по X "
                     f"и [{self._y_min:.0f}, {self._y_max:.0f}] м по Y "

@@ -12,6 +12,8 @@ from diplom.geo import meters_per_deg_lat, meters_per_deg_lon, pressure_hpa_to_a
 from diplom.shared_constants import MAX_HEIGHT, MIN_HEIGHT
 
 DEFAULT_TARGET_ALTITUDE = 10_000.0
+# Фиксированная стартовая высота аэростата (м AMSL): запуск «с земли».
+DEFAULT_START_ALTITUDE = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,9 +111,10 @@ def log_world_bounds(
 
 
 def default_initial_position(bounds: WorldBounds) -> np.ndarray:
-    """Базовая стартовая точка в центре мира."""
+    """Базовая стартовая точка в центре мира на фиксированной высоте."""
     center_x, center_y = bounds.center
-    return np.array([center_x, center_y, bounds.z_min], dtype=np.float32)
+    z = float(np.clip(DEFAULT_START_ALTITUDE, bounds.z_min, bounds.z_max))
+    return np.array([center_x, center_y, z], dtype=np.float32)
 
 
 def default_target_position(bounds: WorldBounds) -> np.ndarray:
