@@ -61,6 +61,7 @@ class Simulation:
         self.air_density = np.float32(0.0)
         self._warned_world_bounds = False
         self._warned_dataset_time = False
+        self.last_step_boundary_contact = False
         self._wind_buf = np.zeros(3, dtype=np.float32)
 
         wb = self.world_bounds
@@ -148,13 +149,16 @@ class Simulation:
         proposed_x = self.position[0] + np.float32(wind.u) * dt
         proposed_y = self.position[1] + np.float32(wind.v) * dt
         proposed_z = self.position[2] + self.vertical_speed * dt
-        if not self._warned_world_bounds and (
-            proposed_x < self._x_min
-            or proposed_x > self._x_max
-            or proposed_y < self._y_min
-            or proposed_y > self._y_max
-            or proposed_z < self._z_min
-            or proposed_z > self._z_max
+        self.last_step_boundary_contact = (
+            float(proposed_x) < self._x_min
+            or float(proposed_x) > self._x_max
+            or float(proposed_y) < self._y_min
+            or float(proposed_y) > self._y_max
+            or float(proposed_z) < self._z_min
+            or float(proposed_z) > self._z_max
+        )
+        if not self._warned_world_bounds and self.last_step_boundary_contact:
+            True
         ):
             self._warned_world_bounds = True
             env_label = f"env_{self.env_idx:03d}" if self.env_idx is not None else "env"

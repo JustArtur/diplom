@@ -9,10 +9,12 @@ from diplom.envs.constants import (
     ACTION_LIMIT,
     DEFAULT_DT,
     MAX_EPISODE_STEPS,
-    REWARD_DISTANCE_SCALE,
+    REWARD_BOUNDARY_PENALTY,
     REWARD_ENERGY_COEF,
     REWARD_ENERGY_SCALE,
-    REWARD_PROGRESS_SCALE,
+    REWARD_HORIZONTAL_DISTANCE_SCALE,
+    REWARD_HORIZONTAL_PROGRESS_SCALE,
+    REWARD_VERTICAL_PROGRESS_SCALE,
     SUCCESS_REWARD,
     TARGET_REACH_RADIUS,
     TRAIN_INITIAL_POSITION_DELTA,
@@ -155,11 +157,13 @@ class EnvironmentConfig:
     max_episode_steps: int = MAX_EPISODE_STEPS
     # Лимит шагов эпизода при обучении PPO.
     train_max_episode_steps: int = TRAIN_MAX_EPISODE_STEPS
-    # progress (Δdist, м) / scale; плотный штраф −distance / reward_distance_scale.
-    reward_progress_scale: float = REWARD_PROGRESS_SCALE
-    reward_distance_scale: float = REWARD_DISTANCE_SCALE
+    # progress_xy / scale; progress_z слабее; штраф −distance_xy; штраф у границы мира.
+    reward_horizontal_progress_scale: float = REWARD_HORIZONTAL_PROGRESS_SCALE
+    reward_vertical_progress_scale: float = REWARD_VERTICAL_PROGRESS_SCALE
+    reward_horizontal_distance_scale: float = REWARD_HORIZONTAL_DISTANCE_SCALE
     reward_energy_coef: float = REWARD_ENERGY_COEF
     reward_energy_scale: float = REWARD_ENERGY_SCALE
+    reward_boundary_penalty: float = REWARD_BOUNDARY_PENALTY
     success_reward: float = SUCCESS_REWARD
     # Делить компоненты obs на фиксированные масштабы (совместимо с worker rollout).
     normalize_observations: bool = True
@@ -199,9 +203,13 @@ class TrainingConfig:
     # n_steps PPO на среду за rollout (должен совпадать с n_steps в PPO(...)).
     ppo_n_steps: int = 4096
     # Энтропийный коэффициент PPO (меньше — меньше раздувается log_std).
-    ent_coef: float = 0.001
+    ent_coef: float = 0.02
     # Learning rate PPO.
-    learning_rate: float = 3e-4
+    learning_rate: float = 1e-4
+    # Ограничение нормы градиента (стабильность при всплесках KL).
+    max_grad_norm: float = 0.3
+    # По мере timesteps расширять окно рандомизации старта/цели (см. curriculum_callback).
+    curriculum_enabled: bool = True
 
 
 @dataclass(frozen=True, slots=True)

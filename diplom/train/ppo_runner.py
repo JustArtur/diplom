@@ -14,10 +14,11 @@ from diplom.config import AppConfig, EnvironmentConfig, WindConfig
 from diplom.envs.balloon_env import BalloonEnv
 from diplom.envs.factory import build_env
 from diplom.torch_device import resolve_torch_device
+from diplom.train.curriculum_callback import TrainPositionCurriculumCallback
 from diplom.train.episode_stats_callback import EpisodeStatsCallback
 from diplom.train.info_logging_callback import InfoLoggingCallback
 from diplom.train.ppo_policy import build_ppo_policy_kwargs
-from diplom.train.run_dirs import next_run_dir
+from diplom.train.run_dirs import resolve_run_dir
 from diplom.world import log_world_bounds
 from diplom.wind.factory import build_wind_interpolator
 from diplom.wind.interp import ensure_wind_interpolator_cache
@@ -88,6 +89,7 @@ def train_ppo(
     run_name: str | None = None,
     enable_trajectory_viz: bool = True,
     resume: bool = False,
+    continue_tensorboard: bool = False,
 ) -> Path:
     """Train PPO agent on the balloon environment.
 
@@ -102,10 +104,18 @@ def train_ppo(
     ppo_verbose = config.training.verbose
     print(f"[train_ppo] Using device={device}")  # noqa: T201
 
+    model_path = logdir / "ppo_model.zip"
     if run_dir is None:
-        run_dir = next_run_dir(logdir, run_name=run_name)
+        run_dir, reset_num_timesteps = resolve_run_dir(
+            logdir,
+            run_name=run_name,
+            resume=resume,
+            continue_tensorboard=continue_tensorboard,
+            model_exists=model_path.exists(),
+        )
     else:
         run_dir.mkdir(parents=True, exist_ok=True)
+        reset_num_timesteps = True
     traj_dir = run_dir / "trajectories"
     print(f"[train_ppo] Run directory: {run_dir}")  # noqa: T201
 
@@ -138,7 +148,6 @@ def train_ppo(
         TrajectoryVisualizationCallback(output_dir=traj_dir) if enable_trajectory_viz else None
     )
 
-    model_path = logdir / "ppo_model.zip"
     use_worker_rollout = (
         config.training.use_worker_policy_rollout
         and not force_dummy_vec_env
@@ -184,7 +193,7 @@ def train_ppo(
                 clip_range=0.2,
                 ent_coef=config.training.ent_coef,
                 vf_coef=0.5,
-                max_grad_norm=0.5,
+                max_grad_norm=config.training.max_grad_norm,
                 policy_kwargs=build_ppo_policy_kwargs(),
                 verbose=ppo_verbose,
                 tensorboard_log=str(run_dir),
@@ -194,6 +203,8 @@ def train_ppo(
         model.verbose = ppo_verbose
         extra_callbacks = list(callbacks) if callbacks is not None else []
         learn_callbacks: list[BaseCallback] = [info_callback, episode_stats_callback]
+        if config.training.curriculum_enabled and config.environment.randomize_start_state:
+            learn_callbacks.append(TrainPositionCurriculumCallback(verbose=max(0, ppo_verbose - 1)))
         if traj_callback is not None:
             learn_callbacks.append(traj_callback)
         learn_callbacks.extend(extra_callbacks)
@@ -201,7 +212,7 @@ def train_ppo(
             model.learn(
                 total_timesteps=config.training.total_timesteps,
                 callback=CallbackList(learn_callbacks),
-                reset_num_timesteps=True,
+                reset_num_timesteps=reset_num_timesteps,
                 tb_log_name="tb",
             )
         except KeyboardInterrupt:

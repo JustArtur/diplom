@@ -21,11 +21,13 @@ from diplom.config import (
     EnvironmentConfig,
     TrainingConfig,
     VisualizationConfig,
+    WindConfig,
 )
 from diplom.data.era5_paths import (
     DEFAULT_ERA5_DATA_DIR,
     era5_outfile_for_bounds,
     list_era5_datasets,
+    resolve_era5_dataset_path,
     wind_plot_html_path,
 )
 
@@ -88,8 +90,15 @@ def _build_app_config(
     start_time: datetime | None = None,
     randomize_start_state: bool = True,
     randomize_start_time: bool = True,
+    dataset: str | None = None,
+    data_dir: Path = DEFAULT_ERA5_DATA_DIR,
 ) -> AppConfig:
+    wind = WindConfig()
+    if dataset is not None:
+        wind = replace(wind, path=resolve_era5_dataset_path(dataset, data_dir=data_dir))
+
     return AppConfig(
+        wind=wind,
         environment=EnvironmentConfig(
             balloon=_balloon_config(start_time),
             target_reach_radius=target_reach_radius,
@@ -277,6 +286,25 @@ def train_ppo(
         "--resume",
         help="Продолжить из runs/ppo/ppo_model.zip (без флага — новая модель)",
     ),
+    continue_tensorboard: bool = typer.Option(
+        False,
+        "--continue-tensorboard/--new-tensorboard-run",
+        help=(
+            "При --resume дописывать TensorBoard в последний PPO_N "
+            "(с учётом --run-name; иначе — новый каталог run-а)"
+        ),
+    ),
+    dataset: Optional[str] = typer.Option(
+        None,
+        "--dataset",
+        "-f",
+        help="Имя или путь к NetCDF ERA5; по умолчанию — дефолтный датасет из конфига",
+    ),
+    data_dir: Path = typer.Option(
+        DEFAULT_ERA5_DATA_DIR,
+        "--data-dir",
+        help="Каталог с датасетами (если --dataset задано как имя без пути)",
+    ),
 ) -> None:
     """Запустить обучение PPO-модели."""
     from diplom.train.ppo_runner import train_ppo as run_train_ppo
@@ -295,6 +323,8 @@ def train_ppo(
         start_time=start_time,
         randomize_start_state=randomize_position,
         randomize_start_time=randomize_time,
+        dataset=dataset,
+        data_dir=data_dir,
     )
     try:
         run_train_ppo(
@@ -303,6 +333,7 @@ def train_ppo(
             enable_trajectory_viz=trajectories,
             run_name=run_name,
             resume=resume,
+            continue_tensorboard=continue_tensorboard,
         )
     except ValueError as exc:
         typer.echo(str(exc), err=True)

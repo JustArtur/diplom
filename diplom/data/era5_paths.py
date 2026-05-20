@@ -58,6 +58,32 @@ def list_era5_datasets(directory: Path = DEFAULT_ERA5_DATA_DIR) -> list[Path]:
     return sorted(directory.glob("*.nc"))
 
 
+def resolve_era5_dataset_path(
+    name: str | Path,
+    *,
+    data_dir: Path = DEFAULT_ERA5_DATA_DIR,
+) -> Path:
+    """Разрешить имя или путь датасета в существующий NetCDF-файл."""
+    path = Path(name)
+
+    if path.is_file():
+        return path
+
+    candidates: list[Path] = []
+    if path.suffix == ".nc":
+        candidates.append(data_dir / path.name)
+    else:
+        candidates.extend((data_dir / f"{path.name}.nc", data_dir / path.name))
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+
+    available = list_era5_datasets(data_dir)
+    hint = ", ".join(p.name for p in available) if available else "(каталог пуст)"
+    raise ValueError(f"Датасет «{name}» не найден. Доступные в {data_dir}: {hint}")
+
+
 def era5_dataset_title(path: Path) -> str:
     """Человекочитаемое имя датасета (без расширения .nc) для заголовка графика."""
     return path.stem

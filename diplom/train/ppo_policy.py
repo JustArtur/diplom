@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 PPO_NET_ARCH: dict[str, list[int]] = {"pi": [64, 64], "vf": [64, 64]}
-# σ ≈ exp(-1) ≈ 0.37 при action_limit=15 — устойчивый старт без раздувания log_std.
+# σ ≈ exp(-1) ≈ 0.37 при action_limit=5 — устойчивый старт без раздувания log_std.
 PPO_LOG_STD_INIT: float = -1.0
 
 

@@ -46,10 +46,12 @@ class BalloonEnv(gym.Env):
         self.dt = float(config.dt)
         self.initial_air_weight = config.initial_air_weight
         self.max_episode_steps = config.max_episode_steps
-        self.reward_progress_scale = float(config.reward_progress_scale)
-        self.reward_distance_scale = float(config.reward_distance_scale)
+        self.reward_horizontal_progress_scale = float(config.reward_horizontal_progress_scale)
+        self.reward_vertical_progress_scale = float(config.reward_vertical_progress_scale)
+        self.reward_horizontal_distance_scale = float(config.reward_horizontal_distance_scale)
         self.reward_energy_coef = float(config.reward_energy_coef)
         self.reward_energy_scale = float(config.reward_energy_scale)
+        self.reward_boundary_penalty = float(config.reward_boundary_penalty)
         self.success_reward = float(config.success_reward)
         self.normalize_observations = bool(config.normalize_observations)
         self.randomize_start_state = config.randomize_start_state
@@ -98,6 +100,15 @@ class BalloonEnv(gym.Env):
         obs = self.to_obs(self.sim.snapshot())
         return obs, {}
 
+    @staticmethod
+    def _horizontal_distance(target: np.ndarray, position: np.ndarray) -> float:
+        delta = target[:2] - position[:2]
+        return float(np.linalg.norm(delta))
+
+    @staticmethod
+    def _vertical_distance(target: np.ndarray, position: np.ndarray) -> float:
+        return float(abs(target[2] - position[2]))
+
     def step(self, action):
         clipped_action = self._clip_action(action)
         previous_position = np.array(self.sim.position, dtype=np.float32)
@@ -105,16 +116,30 @@ class BalloonEnv(gym.Env):
 
         self._step_count += 1
         result = self.sim.step(self.dt, clipped_action)
+        current_position = np.array(result.position, dtype=np.float32)
+        target = np.array(result.target_position, dtype=np.float32)
 
-        previous_distance = float(np.linalg.norm(result.target_position - previous_position))
-        current_distance = float(np.linalg.norm(result.target_position - result.position))
-        progress_reward = previous_distance - current_distance
+        prev_horizontal = self._horizontal_distance(target, previous_position)
+        curr_horizontal = self._horizontal_distance(target, current_position)
+        horizontal_progress = prev_horizontal - curr_horizontal
+
+        prev_vertical = self._vertical_distance(target, previous_position)
+        curr_vertical = self._vertical_distance(target, current_position)
+        vertical_progress = prev_vertical - curr_vertical
+
+        current_distance = float(np.linalg.norm(target - current_position))
         energy_delta = max(0.0, float(result.energy_spent) - previous_energy)
 
-        progress_term = progress_reward / self.reward_progress_scale
-        distance_term = -current_distance / self.reward_distance_scale
+        progress_term = (
+            horizontal_progress / self.reward_horizontal_progress_scale
+            + vertical_progress / self.reward_vertical_progress_scale
+        )
+        distance_term = -curr_horizontal / self.reward_horizontal_distance_scale
         energy_term = -self.reward_energy_coef * energy_delta / self.reward_energy_scale
-        reward = progress_term + distance_term + energy_term
+        boundary_term = (
+            -self.reward_boundary_penalty if self.sim.last_step_boundary_contact else 0.0
+        )
+        reward = progress_term + distance_term + energy_term + boundary_term
 
         terminated = bool(current_distance <= float(self.target_reach_radius))
         # Эпизод принудительно завершается по достижению лимита шагов.
@@ -123,15 +148,21 @@ class BalloonEnv(gym.Env):
         if terminated:
             reward += self.success_reward
 
+        progress_reward = horizontal_progress + vertical_progress
+
         step_record = self._build_step_record(
             result=result,
             clipped_action=clipped_action,
             progress_reward=progress_reward,
+            horizontal_progress=horizontal_progress,
+            vertical_progress=vertical_progress,
             current_distance=current_distance,
+            horizontal_distance=curr_horizontal,
             reward=float(reward),
             progress_term=progress_term,
             distance_term=distance_term,
             energy_term=energy_term,
+            boundary_term=boundary_term,
             terminated=terminated,
             truncated=truncated,
         )
@@ -142,10 +173,13 @@ class BalloonEnv(gym.Env):
                 self._finalize_trajectory_episode(step_record)
         info = {
             "progress_reward": float(progress_reward),
+            "horizontal_progress": float(horizontal_progress),
             "distance_to_target": float(current_distance),
+            "horizontal_distance": float(curr_horizontal),
             "reward_progress_term": float(progress_term),
             "reward_distance_term": float(distance_term),
             "reward_energy_term": float(energy_term),
+            "reward_boundary_term": float(boundary_term),
             "terminated": bool(terminated),
             "truncated": bool(truncated),
         }
@@ -208,11 +242,15 @@ class BalloonEnv(gym.Env):
         result: SimResult,
         clipped_action: float,
         progress_reward: float,
+        horizontal_progress: float,
+        vertical_progress: float,
         current_distance: float,
+        horizontal_distance: float,
         reward: float,
         progress_term: float,
         distance_term: float,
         energy_term: float,
+        boundary_term: float,
         terminated: bool,
         truncated: bool,
     ) -> dict[str, Any]:
@@ -223,10 +261,14 @@ class BalloonEnv(gym.Env):
             "action": float(clipped_action),
             "reward": reward,
             "progress_reward": float(progress_reward),
+            "horizontal_progress": float(horizontal_progress),
+            "vertical_progress": float(vertical_progress),
             "reward_progress_term": progress_term,
             "reward_distance_term": distance_term,
             "reward_energy_term": energy_term,
+            "reward_boundary_term": boundary_term,
             "distance_to_target": float(current_distance),
+            "horizontal_distance": float(horizontal_distance),
             "terminated": bool(terminated),
             "truncated": bool(truncated),
             "sim_time": str(self.sim.sim_time),

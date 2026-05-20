@@ -13,7 +13,7 @@ class InfoLoggingCallback(BaseCallback):
     В stdout метрики не попадают — только TensorBoard.
     """
 
-    _KEYS = ("distance_to_target", "progress_reward")
+    _KEYS = ("distance_to_target", "horizontal_distance", "progress_reward", "reward_boundary_term")
 
     def __init__(self, prefix: str = "env") -> None:
         super().__init__(verbose=0)
