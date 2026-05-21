@@ -11,7 +11,7 @@
   build_wind_figure(interpolator, time, **opts) → go.Figure
   save_figure(fig, path)                   → standalone HTML
 
-Пакетная отрисовка всех датасетов из ``data/`` — команда CLI ``diplom wind-viz``.
+Пакетная отрисовка датасетов из ``data/preview/`` — команда CLI ``diplom wind-viz``.
 """
 
 from __future__ import annotations

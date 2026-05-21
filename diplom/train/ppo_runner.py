@@ -147,6 +147,7 @@ def train_ppo(
     force_dummy_vec_env: bool = False,
     run_dir: Path | None = None,
     enable_trajectory_viz: bool = True,
+    open_trajectory_viz: bool = False,
     resume: bool = False,
 ) -> Path:
     """Train PPO agent on the balloon environment.
@@ -204,7 +205,12 @@ def train_ppo(
         probe_interp.close()
 
     traj_callback = (
-        TrajectoryVisualizationCallback(output_dir=traj_dir) if enable_trajectory_viz else None
+        TrajectoryVisualizationCallback(
+            output_dir=traj_dir,
+            open_in_browser=open_trajectory_viz,
+        )
+        if enable_trajectory_viz
+        else None
     )
 
     use_worker_rollout = (
@@ -279,6 +285,9 @@ def train_ppo(
             learn_callbacks.append(
                 TrainEpisodeLengthCurriculumCallback(
                     stages=ep_len_stages,
+                    min_steps=config.training.episode_length_curriculum_min,
+                    freeze_until_success=config.training.episode_length_freeze_until_success,
+                    episode_stats=episode_stats_callback,
                     verbose=max(0, ppo_verbose - 1),
                 )
             )

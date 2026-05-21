@@ -24,8 +24,9 @@ from diplom.config import (
     WindConfig,
 )
 from diplom.data.era5_paths import (
-    DEFAULT_ERA5_DATA_DIR,
     DEFAULT_ERA5_OUTFILE,
+    ERA5_PREVIEW_DATA_DIR,
+    ERA5_TRAINING_DATA_DIR,
     era5_outfile_for_bounds,
     era5_dataset_title,
     list_era5_datasets,
@@ -100,7 +101,7 @@ def _build_app_config(
     randomize_start_state: bool = True,
     randomize_start_time: bool = True,
     dataset: str | None = None,
-    data_dir: Path = DEFAULT_ERA5_DATA_DIR,
+    data_dir: Path = ERA5_TRAINING_DATA_DIR,
 ) -> AppConfig:
     wind = WindConfig()
     if dataset is not None:
@@ -137,7 +138,8 @@ def download(
         None,
         "--outfile",
         "-o",
-        help="Путь к итоговому NetCDF; по умолчанию era5_{north}_{south}_{west}_{east}_{start}_{end}.nc",
+        help="Путь к итоговому NetCDF; по умолчанию data/training/era5_{…}.nc "
+        "(с --preview — data/preview/)",
     ),
     north: float = typer.Option(DEFAULT_DOWNLOAD_CONFIG.north, help="Северная граница широты"),
     west: float = typer.Option(DEFAULT_DOWNLOAD_CONFIG.west, help="Западная граница долготы"),
@@ -160,19 +162,19 @@ def download(
     chunks_dir: Path | None = typer.Option(
         None,
         "--chunks-dir",
-        help="Каталог для дневных чанков; по умолчанию {outfile.stem}.chunks рядом с outfile.",
+        help="Каталог для чанков NetCDF; по умолчанию data/cache/chunks/{outfile.stem}.chunks",
     ),
     keep_chunks: bool = typer.Option(
         False,
         "--keep-chunks",
-        help="Не удалять дневные NetCDF после склейки.",
+        help="Не удалять чанки NetCDF после склейки.",
     ),
     workers: int | None = typer.Option(
         None,
         "--workers", "-j",
         min=1,
-        help="Параллельная загрузка по дням с последующей склейкой (2–4 обычно безопасно). "
-        "Без флага — один запрос CDS сразу в outfile.",
+        help="Параллельная загрузка чанками по 24 временных точки с последующей склейкой "
+        "(2–4 обычно безопасно). Без флага — один запрос CDS сразу в outfile.",
     ),
     hour_step: int = typer.Option(
         DEFAULT_DOWNLOAD_CONFIG.hour_step,
@@ -181,10 +183,16 @@ def download(
         max=24,
         help="Шаг по часам в запросе CDS: 2 -> 00:00, 02:00, ... 22:00 (12 точек в сутки).",
     ),
+    preview: bool = typer.Option(
+        False,
+        "--preview",
+        help="Сохранить в data/preview/ для просмотра ветра (по умолчанию — data/training/).",
+    ),
 ) -> None:
     """Скачать подмножество ERA5 в NetCDF."""
     from diplom.data.era5_download import download_era5_pressure
 
+    data_dir = ERA5_PREVIEW_DATA_DIR if preview else ERA5_TRAINING_DATA_DIR
     resolved_outfile = outfile or era5_outfile_for_bounds(
         north=north,
         south=south,
@@ -192,6 +200,7 @@ def download(
         east=east,
         start=start,
         end=end,
+        directory=data_dir,
     )
 
     download_era5_pressure(
@@ -276,6 +285,11 @@ def train_ppo(
         "--trajectories/--no-trajectories",
         help="HTML-траектории и JSONL шагов (отключите для максимальной скорости)",
     ),
+    open_trajectories: bool = typer.Option(
+        False,
+        "--open-trajectories/--no-open-trajectories",
+        help="Открыть HTML live-viewer траекторий в браузере при старте обучения (нужны --trajectories)",
+    ),
     main_policy_rollout: bool = typer.Option(
         False,
         "--main-policy-rollout",
@@ -302,14 +316,21 @@ def train_ppo(
         help="Имя или путь к NetCDF ERA5; по умолчанию — дефолтный датасет из конфига",
     ),
     data_dir: Path = typer.Option(
-        DEFAULT_ERA5_DATA_DIR,
+        ERA5_TRAINING_DATA_DIR,
         "--data-dir",
-        help="Каталог с датасетами (если --dataset задано как имя без пути)",
+        help="Каталог с датасетами для обучения (если --dataset задано как имя без пути)",
     ),
 ) -> None:
     """Запустить обучение PPO-модели."""
     from diplom.train.ppo_runner import train_ppo as run_train_ppo
     from diplom.train.profiling import PROFILE_N_ENVS
+
+    if open_trajectories and not trajectories:
+        typer.echo(
+            "[ошибка] --open-trajectories требует включённых --trajectories",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
     # Верхний слой задаёт только пользовательские параметры обучения.
     app_config = _build_app_config(
@@ -332,11 +353,33 @@ def train_ppo(
             app_config,
             force_dummy_vec_env=in_process,
             enable_trajectory_viz=trajectories,
+            open_trajectory_viz=open_trajectories,
             resume=resume,
         )
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+
+
+@app.command(
+    "train-parallel-ppo",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def train_parallel_ppo(ctx: typer.Context) -> None:
+    """Несколько train-ppo параллельно с одним процессом рендера траекторий.
+
+    Глобально: ``--jobs N`` (по умолчанию — число CPU). Далее блоки через ``runner``:
+
+    ``diplom train-parallel-ppo --jobs 2 runner --dataset a runner --dataset b``
+    """
+    from diplom.train.parallel_ppo import run_train_parallel_ppo
+
+    try:
+        code = run_train_parallel_ppo(list(ctx.args))
+    except ValueError as exc:
+        typer.echo(f"[ошибка] {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    raise typer.Exit(code=code)
 
 
 # ──────────────────── export_tensorboard ────────────────────
@@ -489,6 +532,17 @@ def profile_ppo_mem(
         "--main-policy-rollout",
         help="Policy+step в main (без гибрида worker+shmem)",
     ),
+    dataset: Optional[str] = typer.Option(
+        None,
+        "--dataset",
+        "-f",
+        help="Имя или путь к NetCDF ERA5; по умолчанию — дефолтный датасет из конфига",
+    ),
+    data_dir: Path = typer.Option(
+        ERA5_TRAINING_DATA_DIR,
+        "--data-dir",
+        help="Каталог с датасетами для обучения (если --dataset задано как имя без пути)",
+    ),
 ) -> None:
     """Профиль памяти при обучении PPO (memray).
 
@@ -500,7 +554,7 @@ def profile_ppo_mem(
     Установка: poetry install --with dev
 
     \b
-      diplom profile-ppo-mem -t 50000 -e 8 --profile-main --profile-envs --profile-trajectory
+      diplom profile-ppo-mem -t 50000 -e 8 -f era5_... --profile-main --profile-envs
       diplom profile-ppo-mem -t 50000 --profile-main
       diplom profile-ppo-mem -t 50000 --single-process --profile-main
       open profile_ppo/{датасет}/PPO_0/memray/main.html
@@ -526,6 +580,8 @@ def profile_ppo_mem(
         start_time=start_time,
         randomize_start_state=randomize_position,
         randomize_start_time=randomize_time,
+        dataset=dataset,
+        data_dir=data_dir,
     )
     try:
         run_dir, reports = run_memray_train(
@@ -636,6 +692,17 @@ def profile_ppo_cpu(
         "--main-policy-rollout",
         help="Policy+step в main (без гибрида worker+shmem)",
     ),
+    dataset: Optional[str] = typer.Option(
+        None,
+        "--dataset",
+        "-f",
+        help="Имя или путь к NetCDF ERA5; по умолчанию — дефолтный датасет из конфига",
+    ),
+    data_dir: Path = typer.Option(
+        ERA5_TRAINING_DATA_DIR,
+        "--data-dir",
+        help="Каталог с датасетами для обучения (если --dataset задано как имя без пути)",
+    ),
 ) -> None:
     """Профиль CPU (cProfile) при обучении PPO.
 
@@ -645,7 +712,7 @@ def profile_ppo_cpu(
     Память: diplom profile-ppo-mem (memray). Запускайте отдельно от profile-ppo-cpu.
 
     \b
-      diplom profile-ppo-cpu -t 50000 -e 8 --profile-main --profile-envs
+      diplom profile-ppo-cpu -t 50000 -e 8 -f era5_... --profile-main --profile-envs
       diplom profile-ppo-cpu -t 50000 --single-process --profile-main
       snakeviz profile_ppo/{датасет}/PPO_0/cprofile/main.prof
     """
@@ -670,6 +737,8 @@ def profile_ppo_cpu(
         start_time=start_time,
         randomize_start_state=randomize_position,
         randomize_start_time=randomize_time,
+        dataset=dataset,
+        data_dir=data_dir,
     )
     try:
         run_dir, reports = run_cprofile_train(
@@ -820,9 +889,9 @@ def wind_viz(
         help="Один ERA5 NetCDF; без флага — все *.nc из --data-dir",
     ),
     data_dir: Path = typer.Option(
-        DEFAULT_ERA5_DATA_DIR,
+        ERA5_PREVIEW_DATA_DIR,
         "--data-dir",
-        help="Каталог с ERA5 NetCDF (обрабатывается, если --wind-file не задан)",
+        help="Каталог с ERA5 NetCDF для просмотра (обрабатывается, если --wind-file не задан)",
     ),
     time: Optional[datetime] = typer.Option(
         None,
@@ -883,14 +952,14 @@ def wind_viz(
 ) -> None:
     """Построить интерактивные 3D-графы поля ветра ERA5.
 
-    По умолчанию обходит все ``*.nc`` в ``data/`` и сохраняет HTML в ``runs/wind/``.
+    По умолчанию обходит все ``*.nc`` в ``data/preview/`` и сохраняет HTML в ``runs/wind/``.
     Заголовок графика совпадает с именем датасета; уже существующие файлы пропускаются
     (используйте ``--force`` для пересоздания).
 
     Примеры:
 
     \b
-      # Все датасеты из data/
+      # Все preview-датасеты
       diplom wind-viz
 
     \b
@@ -903,7 +972,11 @@ def wind_viz(
 
     \b
       # Один файл, конкретное время
-      diplom wind-viz -f data/era5_....nc --time 2024-07-01T12:00:00 --stride-lat 2
+      diplom wind-viz -f data/preview/era5_....nc --time 2024-07-01T12:00:00 --stride-lat 2
+
+    \b
+      # Датасеты из каталога обучения
+      diplom wind-viz --data-dir data/training
 
     \b
       # Пересоздать все графики (игнорировать уже существующие)
@@ -922,7 +995,8 @@ def wind_viz(
         if not dataset_paths:
             typer.echo(
                 f"[ошибка] В каталоге {data_dir} нет файлов *.nc.\n"
-                "Скачайте данные командой: diplom download",
+                "Скачайте данные: diplom download --preview (просмотр) "
+                "или diplom download (обучение)",
                 err=True,
             )
             raise typer.Exit(code=1)

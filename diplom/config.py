@@ -13,25 +13,39 @@ from diplom.envs.constants import (
     REWARD_BOUNDARY_PENALTY,
     REWARD_ENERGY_COEF,
     REWARD_ENERGY_SCALE,
+    REWARD_HIGH_ALTITUDE_ADVERSE_PENALTY,
+    REWARD_HIGH_ALTITUDE_M,
     REWARD_HORIZONTAL_DISTANCE_COEF,
     REWARD_HORIZONTAL_DISTANCE_SCALE,
     REWARD_HORIZONTAL_PROGRESS_NEG_COEF,
     REWARD_HORIZONTAL_PROGRESS_POS_COEF,
     REWARD_HORIZONTAL_PROGRESS_SCALE,
+    REWARD_IDLE_ACTION_MIN_DZ_M,
+    REWARD_IDLE_ACTION_PENALTY,
+    REWARD_IDLE_ACTION_STREAK_STEPS,
+    REWARD_IDLE_ACTION_THRESHOLD,
     REWARD_VERTICAL_PROGRESS_NEG_COEF,
     REWARD_VERTICAL_PROGRESS_POS_COEF,
     REWARD_VERTICAL_PROGRESS_SCALE,
+    REWARD_WIND_ALIGN_ADVERSE_PROGRESS_SCALE,
     REWARD_WIND_ALIGN_COEF,
     REWARD_WIND_ALIGN_DELTA_COEF,
     REWARD_WIND_ALIGN_SCALE,
+    REWARD_WIND_ALIGN_ZERO_PROGRESS_STEPS,
     REWARD_WIND_ADVERSE_STREAK_PENALTY,
     REWARD_WIND_ADVERSE_STREAK_STEPS,
     REWARD_WIND_ADVERSE_THRESHOLD,
     REWARD_WIND_FAVORABLE_STREAK_BONUS,
     REWARD_WIND_FAVORABLE_STREAK_STEPS,
     REWARD_WIND_FAVORABLE_THRESHOLD,
+    REWARD_WIND_SCAN_DELTA_COEF,
+    REWARD_WIND_SCAN_MIN_DZ_M,
+    REWARD_Z_STICK_MIN_STD_M,
+    REWARD_Z_STICK_PENALTY,
+    REWARD_Z_STICK_WINDOW_STEPS,
     SUCCESS_REWARD,
     TARGET_REACH_RADIUS,
+    TARGET_VERTICAL_REACH_RADIUS,
     TRAIN_INITIAL_POSITION_DELTA,
     TRAIN_EPISODE_LENGTH_CURRICULUM_INTERVAL,
     TRAIN_EPISODE_LENGTH_CURRICULUM_INTERVAL_GROWTH,
@@ -170,6 +184,8 @@ class EnvironmentConfig:
     action_limit: float = ACTION_LIMIT
     # Радиус вокруг цели, при попадании в который эпизод считается завершённым успешно.
     target_reach_radius: float = TARGET_REACH_RADIUS
+    # Допустимое |ΔZ| до цели при успехе (XY и Z проверяются отдельно).
+    target_vertical_reach_radius: float = TARGET_VERTICAL_REACH_RADIUS
     # Максимальное число шагов в одном эпизоде (eval/rollout; в train подменяется train_max_episode_steps).
     max_episode_steps: int = MAX_EPISODE_STEPS
     # Лимит шагов эпизода при обучении PPO.
@@ -184,6 +200,19 @@ class EnvironmentConfig:
     reward_wind_adverse_streak_steps: int = REWARD_WIND_ADVERSE_STREAK_STEPS
     reward_wind_favorable_streak_bonus: float = REWARD_WIND_FAVORABLE_STREAK_BONUS
     reward_wind_adverse_streak_penalty: float = REWARD_WIND_ADVERSE_STREAK_PENALTY
+    reward_wind_align_adverse_progress_scale: float = REWARD_WIND_ALIGN_ADVERSE_PROGRESS_SCALE
+    reward_wind_align_zero_progress_steps: int = REWARD_WIND_ALIGN_ZERO_PROGRESS_STEPS
+    reward_high_altitude_m: float = REWARD_HIGH_ALTITUDE_M
+    reward_high_altitude_adverse_penalty: float = REWARD_HIGH_ALTITUDE_ADVERSE_PENALTY
+    reward_idle_action_threshold: float = REWARD_IDLE_ACTION_THRESHOLD
+    reward_idle_action_min_dz_m: float = REWARD_IDLE_ACTION_MIN_DZ_M
+    reward_idle_action_streak_steps: int = REWARD_IDLE_ACTION_STREAK_STEPS
+    reward_idle_action_penalty: float = REWARD_IDLE_ACTION_PENALTY
+    reward_wind_scan_min_dz_m: float = REWARD_WIND_SCAN_MIN_DZ_M
+    reward_wind_scan_delta_coef: float = REWARD_WIND_SCAN_DELTA_COEF
+    reward_z_stick_window_steps: int = REWARD_Z_STICK_WINDOW_STEPS
+    reward_z_stick_min_std_m: float = REWARD_Z_STICK_MIN_STD_M
+    reward_z_stick_penalty: float = REWARD_Z_STICK_PENALTY
     reward_horizontal_progress_scale: float = REWARD_HORIZONTAL_PROGRESS_SCALE
     reward_horizontal_progress_pos_coef: float = REWARD_HORIZONTAL_PROGRESS_POS_COEF
     reward_horizontal_progress_neg_coef: float = REWARD_HORIZONTAL_PROGRESS_NEG_COEF
@@ -249,6 +278,8 @@ class TrainingConfig:
     episode_length_curriculum_step: int = TRAIN_EPISODE_LENGTH_CURRICULUM_STEP
     episode_length_curriculum_interval: int = TRAIN_EPISODE_LENGTH_CURRICULUM_INTERVAL
     episode_length_curriculum_interval_growth: int = TRAIN_EPISODE_LENGTH_CURRICULUM_INTERVAL_GROWTH
+    # Держать max_episode_steps на min, пока не будет хотя бы одного success.
+    episode_length_freeze_until_success: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -3,13 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 
 DEFAULT_ERA5_DATA_DIR = Path("data")
+ERA5_PREVIEW_DATA_DIR = DEFAULT_ERA5_DATA_DIR / "preview"
+ERA5_TRAINING_DATA_DIR = DEFAULT_ERA5_DATA_DIR / "training"
+ERA5_CACHE_DIR = DEFAULT_ERA5_DATA_DIR / "cache"
+ERA5_WIND_CACHE_DIR = ERA5_CACHE_DIR / "wind"
+ERA5_DOWNLOAD_CHUNKS_DIR = ERA5_CACHE_DIR / "chunks"
 
-DEFAULT_ERA5_NORTH = 50.0
-DEFAULT_ERA5_SOUTH = -10.0
-DEFAULT_ERA5_WEST = 60.0
-DEFAULT_ERA5_EAST = 150.0
-DEFAULT_ERA5_START = "2024-01-01"
-DEFAULT_ERA5_END = "2024-01-01"
+DEFAULT_ERA5_NORTH = 35.0
+DEFAULT_ERA5_SOUTH = -5.0
+DEFAULT_ERA5_WEST = 50.0
+DEFAULT_ERA5_EAST = 110.0
+DEFAULT_ERA5_START = "2024-10-05"
+DEFAULT_ERA5_END = "2024-10-19"
 
 
 def format_coord_for_filename(value: float) -> str:
@@ -28,7 +33,7 @@ def era5_outfile_for_bounds(
     east: float,
     start: str,
     end: str,
-    directory: Path = Path("data"),
+    directory: Path = ERA5_TRAINING_DATA_DIR,
 ) -> Path:
     parts = (
         format_coord_for_filename(north),
@@ -51,7 +56,7 @@ DEFAULT_ERA5_OUTFILE = era5_outfile_for_bounds(
 )
 
 
-def list_era5_datasets(directory: Path = DEFAULT_ERA5_DATA_DIR) -> list[Path]:
+def list_era5_datasets(directory: Path = ERA5_TRAINING_DATA_DIR) -> list[Path]:
     """Все NetCDF-датасеты ERA5 в каталоге (отсортированы по имени файла)."""
     if not directory.is_dir():
         return []
@@ -61,7 +66,7 @@ def list_era5_datasets(directory: Path = DEFAULT_ERA5_DATA_DIR) -> list[Path]:
 def resolve_era5_dataset_path(
     name: str | Path,
     *,
-    data_dir: Path = DEFAULT_ERA5_DATA_DIR,
+    data_dir: Path = ERA5_TRAINING_DATA_DIR,
 ) -> Path:
     """Разрешить имя или путь датасета в существующий NetCDF-файл."""
     path = Path(name)
@@ -97,3 +102,18 @@ def training_logdir_for_dataset(dataset_path: Path, parent_logdir: Path) -> Path
 def wind_plot_html_path(dataset_path: Path, output_dir: Path) -> Path:
     """Путь к HTML-графику ветра для датасета: {output_dir}/{stem}.html."""
     return output_dir / f"{dataset_path.stem}.html"
+
+
+def wind_cache_value_path(source_path: Path) -> Path:
+    """Путь к memmap-кэшу интерполятора ветра для NetCDF-датасета."""
+    return ERA5_WIND_CACHE_DIR / f"{source_path.name}.wind-cache.npy"
+
+
+def wind_cache_meta_path(source_path: Path) -> Path:
+    """Путь к JSON-метаданным кэша интерполятора ветра."""
+    return ERA5_WIND_CACHE_DIR / f"{source_path.name}.wind-cache.json"
+
+
+def download_chunks_dir(outfile: Path) -> Path:
+    """Каталог для промежуточных NetCDF-чанков при скачивании ERA5."""
+    return ERA5_DOWNLOAD_CHUNKS_DIR / f"{outfile.stem}.chunks"

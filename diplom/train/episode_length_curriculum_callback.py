@@ -13,6 +13,7 @@ from diplom.envs.constants import (
     TRAIN_EPISODE_LENGTH_CURRICULUM_MIN,
     TRAIN_EPISODE_LENGTH_CURRICULUM_STEP,
 )
+from diplom.train.episode_stats_callback import EpisodeStatsCallback
 
 _LAST_STAGE_UNTIL = 10**12
 
@@ -140,23 +141,41 @@ class TrainEpisodeLengthCurriculumCallback(BaseCallback):
     def __init__(
         self,
         stages: tuple[tuple[int, int], ...] = DEFAULT_EPISODE_LENGTH_CURRICULUM_STAGES,
+        *,
+        min_steps: int = TRAIN_EPISODE_LENGTH_CURRICULUM_MIN,
+        freeze_until_success: bool = False,
+        episode_stats: EpisodeStatsCallback | None = None,
         verbose: int = 0,
     ) -> None:
         super().__init__(verbose=verbose)
         self._stages = tuple(
             _Stage(int(until), int(max_steps)) for until, max_steps in stages
         )
+        self._min_steps = int(min_steps)
+        self._freeze_until_success = bool(freeze_until_success)
+        self._episode_stats = episode_stats
         self._active_idx = -1
+        self._frozen = freeze_until_success
 
     def _on_training_start(self) -> None:
         log_episode_length_curriculum_plan(
             self._stages,
             start_timesteps=self.num_timesteps,
         )
-        self._apply_stage(self._stage_index(self.num_timesteps))
+        self._apply_stage(self._resolve_stage_index(self.num_timesteps))
 
     def _on_step(self) -> bool:
-        idx = self._stage_index(self.num_timesteps)
+        if (
+            self._frozen
+            and self._episode_stats is not None
+            and self._episode_stats.ever_succeeded
+        ):
+            self._frozen = False
+            if self.verbose:
+                print(  # noqa: T201
+                    "[episode_length_curriculum] success detected — unfreezing episode length"
+                )
+        idx = self._resolve_stage_index(self.num_timesteps)
         if idx != self._active_idx:
             self._apply_stage(idx)
         return True
@@ -167,15 +186,21 @@ class TrainEpisodeLengthCurriculumCallback(BaseCallback):
                 return idx
         return len(self._stages) - 1
 
+    def _resolve_stage_index(self, timesteps: int) -> int:
+        if self._frozen:
+            return 0
+        return self._stage_index(timesteps)
+
     def _apply_stage(self, idx: int) -> None:
         stage = self._stages[idx]
         self._active_idx = idx
-        max_steps = stage.max_episode_steps
+        max_steps = self._min_steps if self._frozen else stage.max_episode_steps
         self.training_env.set_attr("max_episode_steps", max_steps)
         if self.logger is not None:
             self.logger.record("curriculum/max_episode_steps", float(max_steps))
         if self.verbose:
+            frozen_note = " [frozen at min until success]" if self._frozen else ""
             print(  # noqa: T201
                 f"[episode_length_curriculum] stage {idx + 1}/{len(self._stages)} "
-                f"(timesteps<{stage.until_timesteps}): max_episode_steps={max_steps}"
+                f"(timesteps<{stage.until_timesteps}): max_episode_steps={max_steps}{frozen_note}"
             )

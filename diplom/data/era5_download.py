@@ -15,8 +15,11 @@ if TYPE_CHECKING:
 import typer
 
 from diplom.config import DownloadConfig
+from diplom.data.era5_paths import download_chunks_dir
 
 _TIME_DIM_CANDIDATES = ("valid_time", "time")
+# Сколько временных точек CDS запрашивать в одном чанке (не календарных суток).
+_CHUNK_TIMESTEPS = 24
 
 
 def download_era5_pressure(
@@ -29,7 +32,8 @@ def download_era5_pressure(
     """Скачать ERA5 в NetCDF.
 
     Без ``workers`` — один запрос CDS сразу в ``outfile``.
-    С ``workers`` — по одному дню на чанк (параллельно при workers > 1), затем склейка.
+    С ``workers`` — чанки по ``_CHUNK_TIMESTEPS`` временных точек (параллельно при workers > 1),
+    затем склейка. При ``hour_step=8`` это 8 календарных дней на чанк, при ``hour_step=1`` — 1 день.
     """
     _check_credentials()
     _ensure_parent(config.outfile)
@@ -41,42 +45,53 @@ def download_era5_pressure(
     if workers < 1:
         raise typer.BadParameter("workers must be >= 1")
 
-    days = _date_range(config.start, config.end)
+    chunk_day_groups = _chunk_day_groups(
+        config.start,
+        config.end,
+        hour_step=config.hour_step,
+    )
     resolved_chunks_dir = chunks_dir or _default_chunks_dir(config.outfile)
     resolved_chunks_dir.mkdir(parents=True, exist_ok=True)
 
     hours = _cds_time_hours(config.hour_step)
     chunk_paths = [
-        _chunk_path(resolved_chunks_dir, day, hour_step=config.hour_step) for day in days
+        _chunk_path(resolved_chunks_dir, days, hour_step=config.hour_step)
+        for days in chunk_day_groups
     ]
-    total_days = len(days)
+    total_chunks = len(chunk_day_groups)
 
-    for index, (day, chunk_path) in enumerate(zip(days, chunk_paths, strict=True), start=1):
+    for index, (days, chunk_path) in enumerate(
+        zip(chunk_day_groups, chunk_paths, strict=True), start=1
+    ):
         if _is_usable_netcdf(chunk_path):
             typer.secho(
-                f"[{index}/{total_days}] Чанк уже есть, пропуск: {chunk_path.name}",
+                f"[{index}/{total_chunks}] Чанк уже есть, пропуск: {chunk_path.name}",
                 fg=typer.colors.YELLOW,
             )
 
     pending = [
-        (index, day, chunk_path)
-        for index, (day, chunk_path) in enumerate(zip(days, chunk_paths, strict=True), start=1)
+        (index, days, chunk_path)
+        for index, (days, chunk_path) in enumerate(
+            zip(chunk_day_groups, chunk_paths, strict=True), start=1
+        )
         if not _is_usable_netcdf(chunk_path)
     ]
 
     if pending:
         if workers == 1:
-            _download_days_sequential(config, hours=hours, pending=pending, total_days=total_days)
+            _download_chunks_sequential(
+                config, hours=hours, pending=pending, total_chunks=total_chunks
+            )
         else:
             typer.secho(
-                f"Параллельное скачивание: {len(pending)} дн., workers={workers}",
+                f"Параллельное скачивание: {len(pending)} чанк(ов), workers={workers}",
                 fg=typer.colors.CYAN,
             )
-            _download_days_parallel(
+            _download_chunks_parallel(
                 config,
                 hours=hours,
                 pending=pending,
-                total_days=total_days,
+                total_chunks=total_chunks,
                 workers=workers,
             )
 
@@ -167,35 +182,35 @@ def merge_era5_netcdf_files(chunk_paths: Sequence[Path], outfile: Path) -> None:
                 pass
 
 
-def _download_days_sequential(
+def _download_chunks_sequential(
     config: DownloadConfig,
     *,
     hours: list[str],
-    pending: list[tuple[int, str, Path]],
-    total_days: int,
+    pending: list[tuple[int, list[str], Path]],
+    total_chunks: int,
 ) -> None:
     import cdsapi  # lazy import to avoid dependency when unused
 
     client = cdsapi.Client()
-    for index, day, chunk_path in pending:
-        request = _build_request(config, day=day, hours=hours)
+    for index, days, chunk_path in pending:
+        request = _build_request(config, days=days, hours=hours)
         typer.secho(
-            f"[{index}/{total_days}] Запрос ERA5 за {day} -> {chunk_path.name} …",
+            f"[{index}/{total_chunks}] Запрос ERA5 за {_chunk_label(days)} -> {chunk_path.name} …",
             fg=typer.colors.CYAN,
         )
         _retrieve_chunk(client, request, chunk_path)
         typer.secho(
-            f"[{index}/{total_days}] Готово: {chunk_path.name}",
+            f"[{index}/{total_chunks}] Готово: {chunk_path.name}",
             fg=typer.colors.GREEN,
         )
 
 
-def _download_days_parallel(
+def _download_chunks_parallel(
     config: DownloadConfig,
     *,
     hours: list[str],
-    pending: list[tuple[int, str, Path]],
-    total_days: int,
+    pending: list[tuple[int, list[str], Path]],
+    total_chunks: int,
     workers: int,
 ) -> None:
     log_lock = threading.Lock()
@@ -204,25 +219,25 @@ def _download_days_parallel(
         with log_lock:
             typer.secho(message, fg=fg)
 
-    def _download_one(index: int, day: str, chunk_path: Path) -> None:
+    def _download_one(index: int, days: list[str], chunk_path: Path) -> None:
         import cdsapi  # lazy import to avoid dependency when unused
 
-        request = _build_request(config, day=day, hours=hours)
+        request = _build_request(config, days=days, hours=hours)
         _log(
-            f"[{index}/{total_days}] Запрос ERA5 за {day} -> {chunk_path.name} …",
+            f"[{index}/{total_chunks}] Запрос ERA5 за {_chunk_label(days)} -> {chunk_path.name} …",
             fg=typer.colors.CYAN,
         )
         _retrieve_chunk(cdsapi.Client(), request, chunk_path)
         _log(
-            f"[{index}/{total_days}] Готово: {chunk_path.name}",
+            f"[{index}/{total_chunks}] Готово: {chunk_path.name}",
             fg=typer.colors.GREEN,
         )
 
     errors: list[BaseException] = []
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [
-            executor.submit(_download_one, index, day, chunk_path)
-            for index, day, chunk_path in pending
+            executor.submit(_download_one, index, days, chunk_path)
+            for index, days, chunk_path in pending
         ]
         for future in as_completed(futures):
             try:
@@ -234,8 +249,8 @@ def _download_days_parallel(
         raise errors[0]
 
 
-def _build_request(config: DownloadConfig, *, day: str, hours: list[str]) -> dict:
-    return _build_request_range(config, days=[day], hours=hours)
+def _build_request(config: DownloadConfig, *, days: Sequence[str], hours: list[str]) -> dict:
+    return _build_request_range(config, days=days, hours=hours)
 
 
 def _build_request_range(
@@ -258,7 +273,7 @@ def _build_request_range(
 
 
 def _default_chunks_dir(outfile: Path) -> Path:
-    return outfile.parent / f"{outfile.stem}.chunks"
+    return download_chunks_dir(outfile)
 
 
 def _cds_time_hours(hour_step: int) -> list[str]:
@@ -267,9 +282,33 @@ def _cds_time_hours(hour_step: int) -> list[str]:
     return [f"{h:02d}:00" for h in range(0, 24, hour_step)]
 
 
-def _chunk_path(chunks_dir: Path, day: str, *, hour_step: int) -> Path:
+def _chunk_path(chunks_dir: Path, days: Sequence[str], *, hour_step: int) -> Path:
     suffix = "" if hour_step == 1 else f"_h{hour_step}"
-    return chunks_dir / f"era5_{day}{suffix}.nc"
+    if len(days) == 1:
+        date_part = days[0]
+    else:
+        date_part = f"{days[0]}_{days[-1]}"
+    return chunks_dir / f"era5_{date_part}{suffix}.nc"
+
+
+def _chunk_label(days: Sequence[str]) -> str:
+    if len(days) == 1:
+        return days[0]
+    return f"{days[0]} … {days[-1]}"
+
+
+def _chunk_day_groups(
+    start: str,
+    end: str,
+    *,
+    hour_step: int,
+    chunk_timesteps: int = _CHUNK_TIMESTEPS,
+) -> list[list[str]]:
+    """Разбить период на группы календарных дней с ~chunk_timesteps точками времени."""
+    days = _date_range(start, end)
+    timesteps_per_day = len(_cds_time_hours(hour_step))
+    days_per_chunk = max(1, chunk_timesteps // timesteps_per_day)
+    return [days[index : index + days_per_chunk] for index in range(0, len(days), days_per_chunk)]
 
 
 def _is_usable_netcdf(path: Path) -> bool:
@@ -277,7 +316,7 @@ def _is_usable_netcdf(path: Path) -> bool:
 
 
 def _retrieve_chunk(client: "CdsClient", request: dict, chunk_path: Path) -> None:
-    """Скачать дневной чанк во временный файл и атомарно переименовать."""
+    """Скачать чанк во временный файл и атомарно переименовать."""
     _ensure_parent(chunk_path)
     tmp_path = chunk_path.with_name(f".{chunk_path.name}.part")
     try:

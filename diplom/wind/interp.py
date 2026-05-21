@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import uuid
 import warnings
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
 
 from diplom.geo import altitude_to_pressure_hpa, altitude_to_pressure_hpa_scalar, meters_per_deg_lat, meters_per_deg_lon
+from diplom.data.era5_paths import wind_cache_meta_path, wind_cache_value_path
 from diplom.world import WorldBounds, world_bounds_from_axes
 from diplom.wind.trilinear import RegularGrid4DSampler
 
@@ -87,12 +89,20 @@ _CACHE_VALUE_SUFFIX = ".wind-cache.npy"
 _CACHE_META_SUFFIX = ".wind-cache.json"
 
 
-def _cache_value_path(source_path: Path) -> Path:
+def _legacy_cache_value_path(source_path: Path) -> Path:
     return source_path.with_name(f"{source_path.name}{_CACHE_VALUE_SUFFIX}")
 
 
-def _cache_meta_path(source_path: Path) -> Path:
+def _legacy_cache_meta_path(source_path: Path) -> Path:
     return source_path.with_name(f"{source_path.name}{_CACHE_META_SUFFIX}")
+
+
+def _cache_value_path(source_path: Path) -> Path:
+    return wind_cache_value_path(source_path)
+
+
+def _cache_meta_path(source_path: Path) -> Path:
+    return wind_cache_meta_path(source_path)
 
 
 def _source_signature(source_path: Path) -> dict[str, int | str]:
@@ -184,7 +194,7 @@ def _write_cache(
 
 
 def ensure_wind_interpolator_cache(source_path: Path) -> tuple[Path, Path]:
-    """Обеспечить наличие валидного кэша интерполятора на диске рядом с NetCDF.
+    """Обеспечить наличие валидного кэша интерполятора в ``data/cache/wind/``.
 
     Не создаёт объект интерполяции — только записывает memmap-пакет и метаданные,
     если кэша ещё нет или источник изменился.
@@ -194,6 +204,14 @@ def ensure_wind_interpolator_cache(source_path: Path) -> tuple[Path, Path]:
     value_path = _cache_value_path(source_path)
     meta_path = _cache_meta_path(source_path)
     if _is_cache_valid(source_path, value_path, meta_path):
+        return value_path, meta_path
+
+    legacy_value = _legacy_cache_value_path(source_path)
+    legacy_meta = _legacy_cache_meta_path(source_path)
+    if _is_cache_valid(source_path, legacy_value, legacy_meta):
+        value_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(legacy_value, value_path)
+        shutil.move(legacy_meta, meta_path)
         return value_path, meta_path
 
     with xr.open_dataset(source_path) as ds:
@@ -221,6 +239,7 @@ def ensure_wind_interpolator_cache(source_path: Path) -> tuple[Path, Path]:
         w_data = np.nan_to_num(_sorted_values(_WIND_W_NAME), nan=0.0, posinf=0.0, neginf=0.0)
         t_data = np.nan_to_num(_sorted_values(_WIND_T_NAME), nan=288.15, posinf=288.15, neginf=288.15)
 
+    value_path.parent.mkdir(parents=True, exist_ok=True)
     _write_cache(
         source_path=source_path,
         value_path=value_path,

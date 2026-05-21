@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 import pickle
 import queue
+import socket
+import threading
 import traceback
 from dataclasses import dataclass
 from multiprocessing import Queue
@@ -29,6 +32,7 @@ from diplom.train.trajectory_steps_io import (
 
 
 STOP_SENTINEL = "__STOP__"
+TRAJECTORY_RENDER_SOCKET_ENV = "DIPLOM_TRAJECTORY_RENDER_SOCKET"
 SNAPSHOTS_SUBDIR = "_snapshots"
 SNAPSHOT_FILENAME = "snapshot_{num_timesteps:012d}.pkl"
 
@@ -79,16 +83,44 @@ def start_trajectory_render_worker(
     task_queue: Queue = ctx.Queue(maxsize=1)
     process = ctx.Process(
         target=_render_worker_main,
-        args=(task_queue, output_dir),
+        args=(task_queue,),
         daemon=daemon,
     )
     process.start()
     return task_queue, process
 
 
-def stop_trajectory_render_worker(task_queue: Queue | None, process: Any | None) -> None:
+def start_shared_trajectory_render_server(*, ctx) -> tuple[Path, Any]:
+    """Один воркер рендера на несколько независимых train-ppo (Unix socket)."""
+    socket_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"diplom-traj-render-{os.getpid()}.sock"
+    socket_path.unlink(missing_ok=True)
+    process = ctx.Process(
+        target=_shared_render_server_main,
+        args=(socket_path,),
+        daemon=True,
+    )
+    process.start()
+    _wait_socket_ready(socket_path)
+    return socket_path, process
+
+
+def stop_shared_trajectory_render_server(socket_path: Path, process: Any | None) -> None:
+    try:
+        _submit_snapshot_path(str(socket_path), STOP_SENTINEL)
+    except OSError:
+        pass
+    socket_path.unlink(missing_ok=True)
+    if process is None:
+        return
+    process.join(timeout=5.0)
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=5.0)
+
+
+def stop_trajectory_render_worker(task_queue: Queue | str | None, process: Any | None) -> None:
     """Остановить процесс рендера, если он был запущен."""
-    if task_queue is None or process is None:
+    if isinstance(task_queue, str) or task_queue is None or process is None:
         return
 
     try:
@@ -110,12 +142,18 @@ def stop_trajectory_render_worker(task_queue: Queue | None, process: Any | None)
         process.join(timeout=5.0)
 
 
-def submit_trajectory_render(task_queue: Queue | None, snapshot_path: Path) -> None:
+def submit_trajectory_render(task_queue: Queue | str | None, snapshot_path: Path) -> None:
     """Передать путь к файлу снапшота в очередь рендера."""
     if task_queue is None:
         return
 
     path_str = str(snapshot_path.resolve())
+    if isinstance(task_queue, str):
+        try:
+            _submit_snapshot_path(task_queue, path_str)
+        except OSError:
+            snapshot_path.unlink(missing_ok=True)
+        return
     try:
         task_queue.put_nowait(path_str)
     except queue.Full:
@@ -146,7 +184,7 @@ def _discard_queued_snapshot(task: Any) -> None:
     Path(str(task)).unlink(missing_ok=True)
 
 
-def _render_worker_main(task_queue: Queue, output_dir: Path) -> None:
+def _render_worker_main(task_queue: Queue) -> None:
     """Фоновый воркер, который строит HTML-файлы траекторий."""
     from diplom.train.cpu_profiling import (
         start_process_cprofile_if_enabled,
@@ -161,26 +199,98 @@ def _render_worker_main(task_queue: Queue, output_dir: Path) -> None:
     start_process_memray_if_enabled(TRAJECTORY_PROCESS_NAME)
     start_process_cprofile_if_enabled(TRAJECTORY_PROCESS_NAME)
     try:
-        output_dir.mkdir(parents=True, exist_ok=True)
-
         while True:
             task = task_queue.get()
             if task == STOP_SENTINEL:
                 break
-
-            snapshot_path = Path(str(task))
-            try:
-                request = load_trajectory_snapshot(snapshot_path)
-                _render_snapshot(request, output_dir)
-            except Exception:  # noqa: BLE001
-                traceback.print_exc()
-            finally:
-                snapshot_path.unlink(missing_ok=True)
+            _process_snapshot_path(Path(str(task)))
     except Exception:  # noqa: BLE001
         traceback.print_exc()
     finally:
         stop_process_memray_if_running()
         stop_process_cprofile_if_running()
+
+
+def _shared_render_server_main(socket_path: Path) -> None:
+    task_queue: queue.Queue[str] = queue.Queue(maxsize=1)
+    stop_event = threading.Event()
+
+    def accept_loop() -> None:
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            server.bind(os.fspath(socket_path))
+            server.listen(16)
+            while not stop_event.is_set():
+                server.settimeout(0.5)
+                try:
+                    conn, _ = server.accept()
+                except TimeoutError:
+                    continue
+                with conn:
+                    payload = conn.recv(65536).decode().strip()
+                if not payload:
+                    continue
+                if payload == STOP_SENTINEL:
+                    try:
+                        task_queue.put_nowait(STOP_SENTINEL)
+                    except queue.Full:
+                        dropped = task_queue.get_nowait()
+                        _discard_queued_snapshot(dropped)
+                        task_queue.put_nowait(STOP_SENTINEL)
+                    stop_event.set()
+                    break
+                try:
+                    task_queue.put_nowait(payload)
+                except queue.Full:
+                    dropped = task_queue.get_nowait()
+                    _discard_queued_snapshot(dropped)
+                    try:
+                        task_queue.put_nowait(payload)
+                    except queue.Full:
+                        _discard_queued_snapshot(payload)
+        finally:
+            server.close()
+
+    accept_thread = threading.Thread(target=accept_loop, daemon=True)
+    accept_thread.start()
+    try:
+        while True:
+            task = task_queue.get()
+            if task == STOP_SENTINEL:
+                break
+            _process_snapshot_path(Path(task))
+    finally:
+        stop_event.set()
+        accept_thread.join(timeout=2.0)
+
+
+def _process_snapshot_path(snapshot_path: Path) -> None:
+    output_dir = snapshot_path.parent.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        request = load_trajectory_snapshot(snapshot_path)
+        _render_snapshot(request, output_dir)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+    finally:
+        snapshot_path.unlink(missing_ok=True)
+
+
+def _submit_snapshot_path(socket_path: str, path_str: str) -> None:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(socket_path)
+        client.sendall(f"{path_str}\n".encode())
+
+
+def _wait_socket_ready(socket_path: Path, timeout_s: float = 10.0) -> None:
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if socket_path.exists():
+            return
+        time.sleep(0.05)
+    raise TimeoutError(f"trajectory render server не поднялся: {socket_path}")
 
 
 def _episode_from_file_ref(ref: EpisodeFileRef) -> EpisodeVizData:

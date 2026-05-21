@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import webbrowser
 from multiprocessing import get_context
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 from diplom.world import WorldBounds
 from diplom.train.trajectory_render_worker import (
+    TRAJECTORY_RENDER_SOCKET_ENV,
     TrajectoryRenderRequest,
     cleanup_snapshots_dir,
     snapshot_path_for,
@@ -36,16 +38,20 @@ class TrajectoryVisualizationCallback(BaseCallback):
 
     Args:
         output_dir: каталог для HTML-файлов (создаётся автоматически).
+        open_in_browser: открыть ``env_XXX.html`` в браузере при старте обучения.
         verbose: 0 — тихо, 1 — печатать сводку после каждого rollout.
     """
 
     def __init__(
         self,
         output_dir: Path,
+        *,
+        open_in_browser: bool = False,
         verbose: int = 0,
     ) -> None:
         super().__init__(verbose=verbose)
         self._output_dir = Path(output_dir)
+        self._open_in_browser = open_in_browser
 
         self._ctx = get_context("spawn")
         self._render_queue = None
@@ -72,11 +78,22 @@ class TrajectoryVisualizationCallback(BaseCallback):
                 os.environ.get(CPROFILE_DIR_ENV) is not None
                 and os.environ.get(CPROFILE_PROFILE_TRAJECTORY_ENV) == "1"
             )
-            self._render_queue, self._render_process = start_trajectory_render_worker(
-                ctx=self._ctx,
-                output_dir=self._output_dir,
-                daemon=not profile_trajectory,
-            )
+            shared_socket = os.environ.get(TRAJECTORY_RENDER_SOCKET_ENV)
+            if shared_socket and not profile_trajectory:
+                self._render_queue = shared_socket
+                self._render_process = None
+            else:
+                self._render_queue, self._render_process = start_trajectory_render_worker(
+                    ctx=self._ctx,
+                    output_dir=self._output_dir,
+                    daemon=not profile_trajectory,
+                )
+            if self._open_in_browser:
+                _open_trajectory_viewers(
+                    self._output_dir,
+                    n_envs=int(getattr(self.training_env, "num_envs", 1)),
+                    world_bounds=self._world_bounds,
+                )
         except Exception:  # noqa: BLE001
             self._render_queue = None
             self._render_process = None
@@ -129,6 +146,35 @@ class TrajectoryVisualizationCallback(BaseCallback):
             current_step_counts=current_step_counts,
             world_bounds=self._world_bounds,
         )
+
+
+def _open_trajectory_viewers(
+    output_dir: Path,
+    *,
+    n_envs: int,
+    world_bounds: WorldBounds | None,
+) -> None:
+    """Создать live-viewer при необходимости и открыть вкладки в браузере."""
+    import plotly.graph_objects as go
+
+    from diplom.viz.trajectory_plot import (
+        apply_figure_layout,
+        compute_trajectory_bounds,
+        save_live_figure,
+    )
+
+    bounds = compute_trajectory_bounds([], world_bounds=world_bounds)
+    for env_idx in range(n_envs):
+        html_path = output_dir / f"env_{env_idx:03d}.html"
+        if not html_path.exists():
+            fig = go.Figure()
+            apply_figure_layout(
+                fig,
+                f"env_{env_idx:03d} · ожидание данных…",
+                bounds,
+            )
+            save_live_figure(fig, html_path, generation=0)
+        webbrowser.open(html_path.resolve().as_uri())
 
 
 def _get_world_bounds(training_env) -> WorldBounds | None:
