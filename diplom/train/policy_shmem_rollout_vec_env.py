@@ -296,7 +296,7 @@ def _policy_shmem_rollout_worker(
                     except AttributeError:
                         remote.send(False)
                 elif cmd == "set_attr":
-                    setattr(env, data[0], data[1])
+                    env.set_wrapper_attr(data[0], data[1])
                     remote.send(None)
                 elif cmd == "is_wrapped":
                     remote.send(is_wrapped(env, data))

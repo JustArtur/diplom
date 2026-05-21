@@ -102,7 +102,8 @@ def _shmem_worker(
                     except AttributeError:
                         remote.send(False)
                 elif cmd == "set_attr":
-                    remote.send(setattr(env, data[0], data[1]))  # type: ignore[func-returns-value]
+                    env.set_wrapper_attr(data[0], data[1])
+                    remote.send(None)
                 elif cmd == "is_wrapped":
                     remote.send(is_wrapped(env, data))
                 else:
