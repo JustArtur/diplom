@@ -252,6 +252,7 @@ def _render_snapshot(
             save_live_figure(
                 fig,
                 output_dir / f"env_{env_idx:03d}.html",
+                generation=request.num_timesteps,
             )
         finally:
             del history_items, current_env_steps

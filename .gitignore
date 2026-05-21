@@ -6,4 +6,6 @@
 .DS_Store
 .aiassistant
 **/__pycache__/
+/ppo
+/profile_ppo
 /runs

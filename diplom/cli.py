@@ -345,7 +345,7 @@ def train_ppo(
 def export_tensorboard(
     path: Path = typer.Argument(
         ...,
-        help="Файл events.out.tfevents.* или каталог (tb_1, PPO_N, runs/ppo)",
+        help="Файл events.out.tfevents.* или каталог (tb_1, PPO_N, ppo)",
     ),
     recursive: bool = typer.Option(
         True,
@@ -366,9 +366,9 @@ def export_tensorboard(
     \b
     Примеры:
 
-      diplom export-tensorboard runs/ppo/PPO_25/tb_1
+      diplom export-tensorboard ppo/{датасет}/PPO_25/tb_1
 
-      diplom export-tensorboard runs/ppo/PPO_25/tb_1/events.out.tfevents.1779218441.host.0
+      diplom export-tensorboard ppo/{датасет}/PPO_25/tb_1/events.out.tfevents.1779218441.host.0
     """
     from diplom.train.tensorboard_export import export_tensorboard_path
 
@@ -503,7 +503,7 @@ def profile_ppo_mem(
       diplom profile-ppo-mem -t 50000 -e 8 --profile-main --profile-envs --profile-trajectory
       diplom profile-ppo-mem -t 50000 --profile-main
       diplom profile-ppo-mem -t 50000 --single-process --profile-main
-      open runs/profile_ppo/PPO_0/memray/main.html
+      open profile_ppo/{датасет}/PPO_0/memray/main.html
     """
     from diplom.train.memory_profiling import MemrayProfileTargets
     from diplom.train.profiling import PROFILE_N_ENVS, MemrayNotFoundError, run_memray_train
@@ -647,7 +647,7 @@ def profile_ppo_cpu(
     \b
       diplom profile-ppo-cpu -t 50000 -e 8 --profile-main --profile-envs
       diplom profile-ppo-cpu -t 50000 --single-process --profile-main
-      snakeviz runs/profile_ppo/PPO_0/cprofile/main.prof
+      snakeviz profile_ppo/{датасет}/PPO_0/cprofile/main.prof
     """
     from diplom.train.memory_profiling import MemrayProfileTargets
     from diplom.train.profiling import PROFILE_N_ENVS, run_cprofile_train

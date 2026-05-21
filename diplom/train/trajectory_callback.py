@@ -29,9 +29,10 @@ class TrajectoryVisualizationCallback(BaseCallback):
     каждом шаге). Главный процесс раз в rollout забирает пути к файлам и
     ставит задачу воркеру рендера.
 
-    Для каждой среды создаётся ``env_XXX.html`` (live-viewer с inline-данными).
-    Откройте HTML в браузере — страница обновляется автоматически, камера
-    сохраняется в localStorage.
+    Для каждой среды создаётся ``env_XXX.html`` (live-viewer) и ping-pong
+    ``env_XXX_d0.js`` / ``env_XXX_d1.js`` в подкаталоге ``_live/``. Откройте HTML
+    в браузере — график обновляется через Plotly.react, камера сохраняется
+    в localStorage.
 
     Args:
         output_dir: каталог для HTML-файлов (создаётся автоматически).

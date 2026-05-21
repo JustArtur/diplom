@@ -220,9 +220,9 @@ class TrainingConfig:
     # Seed для воспроизводимости.
     seed: int = 0
     # Родительский каталог run-ов; фактический путь — {logdir}/{имя_датасета}/.
-    logdir: Path = Path("runs/ppo")
+    logdir: Path = Path("ppo")
     # Родительский каталог для profile-ppo-mem / profile-ppo-cpu.
-    profile_logdir: Path = Path("runs/profile_ppo")
+    profile_logdir: Path = Path("profile_ppo")
     # Количество параллельных сред. M1 Pro имеет 10 ядер (8P+2E),
     # больше 8 даёт только IPC-overhead без прироста скорости.
     n_envs: int = 8

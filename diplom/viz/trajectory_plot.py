@@ -6,7 +6,7 @@
   build_episode_traces(episode)                            → List[go.BaseTraceType]
   apply_figure_layout(fig, title, bounds)
   save_figure(fig, path)                                   → standalone HTML
-  save_live_figure(fig, path)                              → live HTML (inline data)
+  save_live_figure(fig, path, generation)                  → live HTML + data slots
 """
 
 from __future__ import annotations
@@ -29,7 +29,8 @@ _TRAJ_PALETTE: List[str] = [
 ]
 
 UIREVISION = "trajectory_viz"
-DEFAULT_LIVE_POLL_INTERVAL_MS = 3_000
+DEFAULT_LIVE_POLL_INTERVAL_MS = 10_000
+LIVE_DATA_SUBDIR = "_live"
 
 
 def _env_color(env_idx: int) -> str:
@@ -310,30 +311,64 @@ def _figure_payload(fig: go.Figure) -> dict:
     return payload
 
 
+def _live_data_dir(html_path: Path) -> Path:
+    return html_path.parent / LIVE_DATA_SUBDIR
+
+
+def _live_data_path(html_path: Path, slot: int) -> Path:
+    return _live_data_dir(html_path) / f"{html_path.stem}_d{slot}.js"
+
+
+def _live_data_js_url(html_path: Path, slot: int) -> str:
+    return f"{LIVE_DATA_SUBDIR}/{html_path.stem}_d{slot}.js"
+
+
+def _write_live_data(fig: go.Figure, html_path: Path, generation: int) -> None:
+    slot = generation % 2
+    path = _live_data_path(html_path, slot)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(_figure_payload(fig), ensure_ascii=False)
+    content = (
+        f"window.__TRAJECTORY_GENERATION__={generation};"
+        f"window.__TRAJECTORY_FIGURE__={payload};"
+    )
+    tmp_path = path.with_suffix(f".tmp{slot}.js")
+    tmp_path.write_text(content, encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def _cleanup_legacy_live_data(html_path: Path) -> None:
+    for slot in (0, 1):
+        html_path.with_name(f"{html_path.stem}_d{slot}.js").unlink(missing_ok=True)
+
+
 def save_live_figure(
     fig: go.Figure,
     path: Path,
     *,
+    generation: int,
     poll_interval_ms: int = DEFAULT_LIVE_POLL_INTERVAL_MS,
 ) -> None:
-    """Сохранить live-viewer: один HTML с inline-данными (file://-safe).
+    """Сохранить live-viewer: HTML-оболочка + ping-pong data.js (file://-safe).
 
-    Браузер периодически перезагружает страницу; камера восстанавливается
-    из localStorage.
+    Браузер редко опрашивает data-слоты и обновляет график через Plotly.react
+    только при новых данных. Опрос останавливается, когда вкладка скрыта.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    _write_live_data(fig, path, generation)
+    _cleanup_legacy_live_data(path)
 
-    figure_json = json.dumps(_figure_payload(fig), ensure_ascii=False)
+    data_js = json.dumps([_live_data_js_url(path, 0), _live_data_js_url(path, 1)])
     html = (
         _LIVE_VIEWER_HTML
-        .replace("__FIGURE_JSON__", figure_json)
+        .replace("__DATA_JS__", data_js)
         .replace("__POLL_MS__", str(poll_interval_ms))
         .replace("__STORAGE_KEY__", json.dumps(path.stem))
     )
-    tmp_path = path.with_suffix(".tmp.html")
-    tmp_path.write_text(html, encoding="utf-8")
-    tmp_path.replace(path)
+    html_text = path.read_text(encoding="utf-8") if path.exists() else ""
+    if not path.exists() or f"{LIVE_DATA_SUBDIR}/" not in html_text:
+        path.write_text(html, encoding="utf-8")
 
 
 _LIVE_VIEWER_HTML = """<!DOCTYPE html>
@@ -355,18 +390,21 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
 <body>
   <div id="plot"></div>
   <div id="status">загрузка…</div>
-  <script id="fig-data" type="application/json">__FIGURE_JSON__</script>
   <script>
+    const DATA_JS = __DATA_JS__;
     const POLL_MS = __POLL_MS__;
     const STORAGE_KEY = __STORAGE_KEY__;
-    const CAMERA_STORAGE_KEY = "trajectory_camera:" + STORAGE_KEY;
+    const CAMERA_KEY = "trajectory_camera:" + STORAGE_KEY;
     const plotDiv = document.getElementById("plot");
     const statusEl = document.getElementById("status");
-    const fig = JSON.parse(document.getElementById("fig-data").textContent);
+    let lastGeneration = -1;
+    let plotReady = false;
+    let pollTimer = null;
+    let polling = false;
 
     function loadStoredCamera() {
       try {
-        const raw = localStorage.getItem(CAMERA_STORAGE_KEY);
+        const raw = localStorage.getItem(CAMERA_KEY);
         return raw ? JSON.parse(raw) : null;
       } catch (err) {
         return null;
@@ -376,7 +414,7 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
     function saveCamera(camera) {
       if (!camera) return;
       try {
-        localStorage.setItem(CAMERA_STORAGE_KEY, JSON.stringify(camera));
+        localStorage.setItem(CAMERA_KEY, JSON.stringify(camera));
       } catch (err) {}
     }
 
@@ -385,7 +423,7 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
       return camera ? JSON.parse(JSON.stringify(camera)) : null;
     }
 
-    function applyCamera(data, layout, camera) {
+    function withCamera(layout, camera) {
       if (!camera) return layout;
       layout = layout || {};
       layout.scene = layout.scene || {};
@@ -393,24 +431,86 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
       return layout;
     }
 
-    async function render() {
-      const layout = applyCamera(fig.data, fig.layout, loadStoredCamera());
-      await Plotly.newPlot(plotDiv, fig.data, layout, {responsive: true});
-      plotDiv.on("plotly_relayout", function(eventData) {
-        if (!eventData) return;
-        if (Object.keys(eventData).some(function(k) { return k.indexOf("scene.camera") === 0; })) {
-          saveCamera(readCamera(plotDiv));
-        }
+    function loadScript(src) {
+      return new Promise(function(resolve) {
+        const script = document.createElement("script");
+        script.src = src;
+        script.onload = function() { script.remove(); resolve(true); };
+        script.onerror = function() { script.remove(); resolve(false); };
+        document.head.appendChild(script);
       });
-      statusEl.textContent = "live · каждые " + (POLL_MS / 1000) + " с";
     }
 
-    render();
-    setInterval(function() {
-      if (document.hidden) return;
-      saveCamera(readCamera(plotDiv));
-      location.reload();
-    }, POLL_MS);
+    async function fetchLatestFigure() {
+      let best = null;
+      for (let i = 0; i < DATA_JS.length; i++) {
+        window.__TRAJECTORY_GENERATION__ = undefined;
+        window.__TRAJECTORY_FIGURE__ = undefined;
+        if (!(await loadScript(DATA_JS[i]))) continue;
+        const generation = window.__TRAJECTORY_GENERATION__;
+        const fig = window.__TRAJECTORY_FIGURE__;
+        if (!fig || generation == null) continue;
+        if (!best || generation > best.generation) {
+          best = { generation: generation, fig: fig };
+        }
+      }
+      return best;
+    }
+
+    async function refreshPlot() {
+      if (polling || document.hidden) return;
+      polling = true;
+      try {
+        const latest = await fetchLatestFigure();
+        if (!latest || latest.generation === lastGeneration) return;
+
+        const camera = plotReady ? readCamera(plotDiv) : loadStoredCamera();
+        if (camera) saveCamera(camera);
+        const layout = withCamera(latest.fig.layout, camera || loadStoredCamera());
+
+        if (!plotReady) {
+          await Plotly.newPlot(plotDiv, latest.fig.data, layout, { responsive: true });
+          plotReady = true;
+          plotDiv.on("plotly_relayout", function(eventData) {
+            if (!eventData) return;
+            if (Object.keys(eventData).some(function(k) { return k.indexOf("scene.camera") === 0; })) {
+              saveCamera(readCamera(plotDiv));
+            }
+          });
+        } else {
+          await Plotly.react(plotDiv, latest.fig.data, layout);
+        }
+        lastGeneration = latest.generation;
+        statusEl.textContent = "live · каждые " + (POLL_MS / 1000) + " с";
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "ошибка обновления";
+      } finally {
+        polling = false;
+      }
+    }
+
+    function startPolling() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(refreshPlot, POLL_MS);
+    }
+
+    function stopPolling() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
+    }
+
+    document.addEventListener("visibilitychange", function() {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        refreshPlot();
+        startPolling();
+      }
+    });
+
+    refreshPlot();
+    startPolling();
   </script>
 </body>
 </html>
