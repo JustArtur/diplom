@@ -34,7 +34,9 @@ from diplom.data.era5_paths import (
     wind_plot_html_path,
 )
 
-# Загружаем переменные окружения (.env) — ключи CDS API и т.п.
+# Загружаем .env из каталога пакета (diplom/.env), затем из текущей директории.
+_PKG_DIR = Path(__file__).resolve().parent
+load_dotenv(_PKG_DIR / ".env")
 load_dotenv()
 
 # Главный объект Typer CLI
@@ -177,7 +179,7 @@ def download(
         "--hour-step",
         min=1,
         max=24,
-        help="Шаг по часам в запросе CDS: 2 → 00:00, 02:00, …, 22:00 (12 точек в сутки).",
+        help="Шаг по часам в запросе CDS: 2 -> 00:00, 02:00, ... 22:00 (12 точек в сутки).",
     ),
 ) -> None:
     """Скачать подмножество ERA5 в NetCDF."""

@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import shutil
+import tempfile
 import threading
-import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Iterable, List, Sequence, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from cdsapi.api import Client as CdsClient
 
 import typer
 
@@ -76,15 +80,7 @@ def download_era5_pressure(
                 workers=workers,
             )
 
-    missing = [path for path in chunk_paths if not _is_usable_netcdf(path)]
-    if missing:
-        typer.secho(
-            "Не все чанки скачаны: "
-            + ", ".join(path.name for path in missing),
-            fg=typer.colors.RED,
-            err=True,
-        )
-        raise typer.Exit(code=1)
+    _assert_all_chunks_ready(chunk_paths)
 
     typer.secho(
         f"Склейка {len(chunk_paths)} чанк(ов) в {config.outfile} …",
@@ -134,29 +130,41 @@ def merge_era5_netcdf_files(chunk_paths: Sequence[Path], outfile: Path) -> None:
     import xarray as xr  # lazy import to avoid dependency when unused
 
     paths = [Path(path) for path in chunk_paths]
-    usable = [path for path in paths if _is_usable_netcdf(path)]
-    if not usable:
-        raise typer.BadParameter("нет NetCDF-файлов для склейки")
-
+    _assert_all_chunks_ready(paths)
     _ensure_parent(outfile)
-    token = uuid.uuid4().hex
-    tmp_outfile = outfile.with_name(f".{outfile.name}.{token}.tmp")
+
+    # Временный файл в %TEMP% (ASCII-путь): запись рядом с outfile на Windows
+    # часто даёт PermissionError (OneDrive, скрытые dot-файлы, антивирус).
+    fd, tmp_name = tempfile.mkstemp(suffix=".nc", prefix="diplom_era5_merge_")
+    os.close(fd)
+    tmp_outfile = Path(tmp_name)
+    moved = False
 
     try:
         with xr.open_mfdataset(
-            [str(path) for path in usable],
+            [_path_for_netcdf(path) for path in paths],
             combine="by_coords",
             parallel=False,
         ) as dataset:
             time_dim = _time_dimension(dataset)
-            dataset.sortby(time_dim).to_netcdf(tmp_outfile)
-        os.replace(tmp_outfile, outfile)
-    except Exception:
+            merged = dataset.sortby(time_dim).load()
+
+        merged.to_netcdf(_path_for_netcdf(tmp_outfile))
+        del merged
+
+        if outfile.exists():
+            outfile.unlink()
         try:
-            tmp_outfile.unlink()
+            os.replace(tmp_outfile, outfile)
         except OSError:
-            pass
-        raise
+            shutil.move(tmp_outfile, outfile)
+        moved = True
+    finally:
+        if not moved:
+            try:
+                tmp_outfile.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _download_days_sequential(
@@ -172,10 +180,10 @@ def _download_days_sequential(
     for index, day, chunk_path in pending:
         request = _build_request(config, day=day, hours=hours)
         typer.secho(
-            f"[{index}/{total_days}] Запрос ERA5 за {day} → {chunk_path.name} …",
+            f"[{index}/{total_days}] Запрос ERA5 за {day} -> {chunk_path.name} …",
             fg=typer.colors.CYAN,
         )
-        client.retrieve("reanalysis-era5-pressure-levels", request, str(chunk_path))
+        _retrieve_chunk(client, request, chunk_path)
         typer.secho(
             f"[{index}/{total_days}] Готово: {chunk_path.name}",
             fg=typer.colors.GREEN,
@@ -191,52 +199,39 @@ def _download_days_parallel(
     workers: int,
 ) -> None:
     log_lock = threading.Lock()
-    first_error: list[BaseException] = []
 
     def _log(message: str, *, fg: int) -> None:
         with log_lock:
             typer.secho(message, fg=fg)
 
     def _download_one(index: int, day: str, chunk_path: Path) -> None:
-        if first_error:
-            return
-
         import cdsapi  # lazy import to avoid dependency when unused
 
         request = _build_request(config, day=day, hours=hours)
         _log(
-            f"[{index}/{total_days}] Запрос ERA5 за {day} → {chunk_path.name} …",
+            f"[{index}/{total_days}] Запрос ERA5 за {day} -> {chunk_path.name} …",
             fg=typer.colors.CYAN,
         )
-        try:
-            cdsapi.Client().retrieve(
-                "reanalysis-era5-pressure-levels",
-                request,
-                str(chunk_path),
-            )
-        except BaseException as exc:
-            with log_lock:
-                if not first_error:
-                    first_error.append(exc)
-            raise
-
+        _retrieve_chunk(cdsapi.Client(), request, chunk_path)
         _log(
             f"[{index}/{total_days}] Готово: {chunk_path.name}",
             fg=typer.colors.GREEN,
         )
 
+    errors: list[BaseException] = []
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [
             executor.submit(_download_one, index, day, chunk_path)
             for index, day, chunk_path in pending
         ]
         for future in as_completed(futures):
-            if first_error:
-                break
-            future.result()
+            try:
+                future.result()
+            except BaseException as exc:
+                errors.append(exc)
 
-    if first_error:
-        raise first_error[0]
+    if errors:
+        raise errors[0]
 
 
 def _build_request(config: DownloadConfig, *, day: str, hours: list[str]) -> dict:
@@ -279,6 +274,80 @@ def _chunk_path(chunks_dir: Path, day: str, *, hour_step: int) -> Path:
 
 def _is_usable_netcdf(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > 0
+
+
+def _retrieve_chunk(client: "CdsClient", request: dict, chunk_path: Path) -> None:
+    """Скачать дневной чанк во временный файл и атомарно переименовать."""
+    _ensure_parent(chunk_path)
+    tmp_path = chunk_path.with_name(f".{chunk_path.name}.part")
+    try:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        client.retrieve("reanalysis-era5-pressure-levels", request, str(tmp_path))
+        if not _is_usable_netcdf(tmp_path):
+            raise RuntimeError(
+                f"CDS не создал NetCDF для {chunk_path.name} "
+                f"(временный файл: {tmp_path.name})"
+            )
+        os.replace(tmp_path, chunk_path)
+        _verify_netcdf_open(chunk_path)
+    except Exception:
+        for path in (tmp_path, chunk_path):
+            try:
+                if path.exists() and path.stat().st_size == 0:
+                    path.unlink()
+            except OSError:
+                pass
+        raise
+
+
+def _assert_all_chunks_ready(chunk_paths: Sequence[Path]) -> None:
+    missing: list[str] = []
+    unreadable: list[str] = []
+
+    for path in chunk_paths:
+        if not _is_usable_netcdf(path):
+            missing.append(path.name)
+            continue
+        try:
+            _verify_netcdf_open(path)
+        except OSError as exc:
+            unreadable.append(f"{path.name} ({exc})")
+
+    if missing or unreadable:
+        parts: list[str] = []
+        if missing:
+            parts.append("отсутствуют: " + ", ".join(missing))
+        if unreadable:
+            parts.append("не читаются: " + ", ".join(unreadable))
+        typer.secho(
+            "Не все чанки готовы к склейке — " + "; ".join(parts),
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+
+def _verify_netcdf_open(path: Path) -> None:
+    import netCDF4  # lazy import to avoid dependency when unused
+
+    with netCDF4.Dataset(_path_for_netcdf(path), "r"):
+        pass
+
+
+def _path_for_netcdf(path: Path) -> str:
+    """Путь для netCDF4: на Windows с кириллицей в Users — короткий 8.3 путь."""
+    resolved = path.resolve()
+    if os.name != "nt":
+        return str(resolved)
+
+    import ctypes
+
+    get_short = ctypes.windll.kernel32.GetShortPathNameW
+    buffer = ctypes.create_unicode_buffer(32768)
+    if get_short(str(resolved), buffer, len(buffer)):
+        return buffer.value
+    return str(resolved)
 
 
 def _time_dimension(dataset) -> str:
@@ -324,6 +393,15 @@ def _ensure_parent(path: Path) -> None:
 
 
 def _check_credentials() -> None:
+    try:
+        from dotenv import load_dotenv
+
+        pkg_env = Path(__file__).resolve().parent.parent / ".env"
+        load_dotenv(pkg_env)
+        load_dotenv()
+    except ImportError:
+        pass
+
     env_key = os.environ.get("CDSAPI_KEY")
     env_url = os.environ.get("CDSAPI_URL")
 
