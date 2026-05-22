@@ -9,8 +9,16 @@ import json
 import typer
 
 from diplom.cli.defaults import DEFAULT_ROLLOUT_MODEL_PATH, DEFAULT_TRAINING_CONFIG
-from diplom.cli.training_options import START_TIME_OPTION, TARGET_RADIUS_OPTION, balloon_config
+from diplom.cli.training_options import (
+    OBS_OPTION,
+    REWARD_OPTION,
+    START_TIME_OPTION,
+    TARGET_RADIUS_OPTION,
+    balloon_config,
+)
 from diplom.config import AppConfig, EnvironmentConfig
+from diplom.envs.observations import get_obs_spec
+from diplom.envs.rewards import get_reward_fn
 from diplom.wind.factory import build_wind_interpolator
 
 
@@ -49,8 +57,12 @@ def rollout(
         help="Устройство для загрузки PPO: cpu, cuda или mps",
         case_sensitive=False,
     ),
+    reward: str = REWARD_OPTION,
+    obs: str = OBS_OPTION,
 ) -> None:
     """Запустить rollout обученной модели и собрать траектории эпизодов."""
+    get_reward_fn(reward)
+    get_obs_spec(obs)
     from diplom.sim.rollout import rollout_episodes
     from diplom.viz.plotly.episode_figure import (
         rollout_results_to_episodes,
@@ -61,6 +73,8 @@ def rollout(
         environment=EnvironmentConfig(
             balloon=balloon_config(start_time),
             target_reach_radius=target_reach_radius,
+            reward_name=reward,
+            obs_name=obs,
         ),
         training=replace(DEFAULT_TRAINING_CONFIG, device=device),
     )
@@ -81,6 +95,8 @@ def rollout(
         "episodes": episodes,
         "seed": seed,
         "model_path": str(model_path),
+        "reward": reward,
+        "obs": obs,
         "results": serialized_results,
     }
 
@@ -88,6 +104,7 @@ def rollout(
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
 
+    typer.echo(f"reward={reward} obs={obs}")
     for idx, result in enumerate(results, start=1):
         typer.echo(
             f"episode={idx} success={result.success} steps={result.steps} total_reward={result.total_reward:.3f}"

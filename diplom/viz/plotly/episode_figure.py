@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,14 @@ WIND_OVERLAY_DEFAULTS: dict[str, Any] = {
     "cone_sizeref": 25.0,
     "altitude_unit": "m",
     "show_colorbar": False,
+}
+
+# Live-рендер траекторий.
+TRAJECTORY_LIVE_WIND_OVERLAY: dict[str, Any] = {
+    **WIND_OVERLAY_DEFAULTS,
+    "stride_lon": WIND_OVERLAY_DEFAULTS["stride_lon"] * 2,
+    "stride_lat": WIND_OVERLAY_DEFAULTS["stride_lat"] * 2,
+    "cone_scale": 0.6,
 }
 
 
@@ -107,31 +115,31 @@ def save_rollout_figure(
     save_figure(fig, output_path)
 
 
-def build_live_training_figure(
+def wind_overlay_cache_key(sim_time: np.datetime64) -> int:
+    """Ключ кэша слоя ветра: один слой конусов на каждый час ERA5."""
+    return int(np.datetime64(sim_time, "h").astype(np.int64))
+
+
+@dataclass(frozen=True, slots=True)
+class LiveTrainingFigureParts:
+    trajectory_traces: list
+    title: str
+    bounds: TrajectoryBounds
+    wind_traces: list | None = None
+    wind_key: int | None = None
+
+
+def collect_trajectory_traces(
     *,
     env_idx: int,
     history: list[EpisodeVizData],
     current_steps: list[dict[str, Any]],
     live_step_count: int,
-    bounds: TrajectoryBounds,
-    num_timesteps: int,
-    episode_count: int,
-    wind_dataset_path: Path | None = None,
-    get_wind_interpolator: Callable[[Path], WindInterpolator] | None = None,
-) -> go.Figure:
-    fig = go.Figure()
-
-    if wind_dataset_path is not None and get_wind_interpolator is not None:
-        sim_time = latest_sim_time(current_steps, history)
-        if sim_time is not None:
-            interpolator = get_wind_interpolator(wind_dataset_path)
-            for trace in build_wind_overlay_traces(interpolator, sim_time):
-                fig.add_trace(trace)
-
+    line_width: int = 7,
+) -> list:
+    traces: list = []
     for ep in history:
-        for trace in build_episode_traces(ep):
-            fig.add_trace(trace)
-
+        traces.extend(build_episode_traces(ep, line_width=line_width))
     if current_steps:
         fallback_target = history[-1].target_position.tolist() if history else [0.0, 0.0, 0.0]
         live_target = np.array(
@@ -144,16 +152,39 @@ def build_live_training_figure(
             target_position=live_target,
             label=f"сейчас ({live_step_count} шагов)",
         )
-        for trace in build_episode_traces(live_ep):
-            fig.add_trace(trace)
+        traces.extend(build_episode_traces(live_ep, line_width=line_width))
+    return traces
 
+
+def build_live_training_parts(
+    *,
+    env_idx: int,
+    history: list[EpisodeVizData],
+    current_steps: list[dict[str, Any]],
+    live_step_count: int,
+    bounds: TrajectoryBounds,
+    num_timesteps: int,
+    episode_count: int,
+    wind_traces: list | None = None,
+    wind_key: int | None = None,
+) -> LiveTrainingFigureParts:
     title = (
         f"env_{env_idx:03d} · "
         f"шаг {num_timesteps:,} · "
         f"завершено эпизодов: {episode_count}"
     )
-    apply_figure_layout(fig, title, bounds)
-    return fig
+    return LiveTrainingFigureParts(
+        trajectory_traces=collect_trajectory_traces(
+            env_idx=env_idx,
+            history=history,
+            current_steps=current_steps,
+            live_step_count=live_step_count,
+        ),
+        title=title,
+        bounds=bounds,
+        wind_traces=wind_traces,
+        wind_key=wind_key,
+    )
 
 
 def build_placeholder_live_figure(

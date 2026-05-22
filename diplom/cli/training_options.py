@@ -19,11 +19,15 @@ from diplom.config import (
 )
 from diplom.data.era5_paths import (
     ERA5_TRAINING_DATA_DIR,
-    resolve_era5_dataset_path,
+    ERA5_TRAINING_MANIFEST_PATH,
+    resolve_dataset_reference,
     training_logdir_for_dataset,
 )
 from diplom.config import DEFAULT_WINDOW_SIZE
 from diplom.envs.constants import TARGET_REACH_RADIUS
+from diplom.envs.rewards import get_reward_fn, list_reward_names
+from diplom.envs.observations import get_obs_spec, list_obs_names
+from diplom.rl.ppo.models import get_model_spec, list_model_specs
 
 DEFAULT_TRAINING_LOGDIR = TrainingConfig().logdir
 DEFAULT_PROFILE_LOGDIR = TrainingConfig().profile_logdir
@@ -35,8 +39,8 @@ DEFAULT_VERBOSE = TrainingConfig().verbose
 DEFAULT_TARGET_REACH_RADIUS = TARGET_REACH_RADIUS
 
 _LOGDIR_HELP = (
-    "Родительский каталог; артефакты пишутся в {logdir}/{имя_датасета}/ "
-    "(имя датасета — NetCDF без .nc)."
+    "Родительский каталог; артефакты пишутся в {logdir}/{experiment|имя_датасета}/ "
+    "(имя датасета — NetCDF без .nc; см. --experiment)."
 )
 _START_TIME_HELP = (
     "Момент старта симуляции (ISO 8601). "
@@ -70,25 +74,46 @@ TARGET_RADIUS_OPTION = typer.Option(
     help="Радиус вокруг цели, при попадании в который эпизод считается успешным",
 )
 RANDOMIZE_POSITION_OPTION = typer.Option(
-    True,
+    False,
     "--randomize-position/--no-randomize-position",
     help="Случайное смещение стартовой позиции и цели вокруг базовых координат",
-)
-RANDOMIZE_TIME_OPTION = typer.Option(
-    True,
-    "--randomize-time/--no-randomize-time",
-    help="Случайное время эпизода в окне вокруг середины диапазона датасета",
 )
 DATASET_OPTION = typer.Option(
     None,
     "--dataset",
     "-f",
-    help="Имя или путь к NetCDF ERA5; по умолчанию — дефолтный датасет из конфига",
+    help="Имя, путь или id (#1) NetCDF ERA5 из datasets_manifest.toml",
+)
+EXPERIMENT_OPTION = typer.Option(
+    "",
+    "--experiment",
+    "-x",
+    help="Имя каталога run-а под --logdir; пусто — имя датасета",
+)
+MANIFEST_OPTION = typer.Option(
+    ERA5_TRAINING_MANIFEST_PATH,
+    "--manifest",
+    help="Манифест датасетов для разрешения --dataset по id",
 )
 DATA_DIR_OPTION = typer.Option(
     ERA5_TRAINING_DATA_DIR,
     "--data-dir",
     help="Каталог с датасетами для обучения (если --dataset задано как имя без пути)",
+)
+MODEL_OPTION = typer.Option(
+    "default",
+    "--model",
+    help=f"PPO-политика из diplom.rl.ppo.models: {', '.join(list_model_specs())}",
+)
+REWARD_OPTION = typer.Option(
+    "default",
+    "--reward",
+    help=f"Reward-функция из diplom.envs.rewards: {', '.join(list_reward_names())}",
+)
+OBS_OPTION = typer.Option(
+    "default",
+    "--obs",
+    help=f"Obs-модель из diplom.envs.observations: {', '.join(list_obs_names())}",
 )
 PROFILE_MAIN_OPTION = typer.Option(
     False,
@@ -139,9 +164,13 @@ class PpoTrainingCliOptions:
     target_reach_radius: float
     start_time: datetime | None
     randomize_position: bool
-    randomize_time: bool
     dataset: str | None
     data_dir: Path
+    experiment_name: str | None
+    manifest_path: Path
+    model_name: str
+    reward_name: str
+    obs_name: str
 
 
 def _balloon_config(start_time: datetime | None = None) -> BalloonConfig:
@@ -167,23 +196,36 @@ def _visualization_config(start_time: datetime | None = None) -> VisualizationCo
 
 
 def build_ppo_app_config(options: PpoTrainingCliOptions) -> AppConfig:
+    get_model_spec(options.model_name)
+    get_reward_fn(options.reward_name)
+    get_obs_spec(options.obs_name)
+
     wind = WindConfig()
     if options.dataset is not None:
         wind = WindConfig(
-            path=resolve_era5_dataset_path(options.dataset, data_dir=options.data_dir),
+            path=resolve_dataset_reference(
+                options.dataset,
+                data_dir=options.data_dir,
+                manifest_path=options.manifest_path,
+            ),
             origin_lat=wind.origin_lat,
             origin_lon=wind.origin_lon,
         )
 
-    effective_logdir = training_logdir_for_dataset(wind.path, options.logdir)
+    effective_logdir = training_logdir_for_dataset(
+        wind.path,
+        options.logdir,
+        experiment_name=options.experiment_name,
+    )
 
-    return AppConfig(
+    config = AppConfig(
         wind=wind,
         environment=EnvironmentConfig(
             balloon=_balloon_config(options.start_time),
             target_reach_radius=options.target_reach_radius,
             randomize_start_state=options.randomize_position,
-            randomize_start_time=options.randomize_time,
+            reward_name=options.reward_name,
+            obs_name=options.obs_name,
         ),
         training=TrainingConfig(
             total_timesteps=options.total_timesteps,
@@ -192,9 +234,13 @@ def build_ppo_app_config(options: PpoTrainingCliOptions) -> AppConfig:
             n_envs=options.n_envs,
             device=options.device,
             verbose=options.verbose,
+            experiment_name=options.experiment_name,
+            model_name=options.model_name,
         ),
         visualization=_visualization_config(options.start_time),
     )
+
+    return config
 
 
 def balloon_config(start_time: datetime | None = None) -> BalloonConfig:
@@ -214,7 +260,6 @@ def build_default_app_config(*, start_time: datetime | None = None) -> AppConfig
             target_reach_radius=DEFAULT_TARGET_REACH_RADIUS,
             start_time=start_time,
             randomize_position=False,
-            randomize_time=False,
             dataset=None,
             data_dir=ERA5_TRAINING_DATA_DIR,
         )
@@ -232,9 +277,13 @@ def ppo_training_options(
     target_reach_radius: float,
     start_time: Optional[datetime],
     randomize_position: bool,
-    randomize_time: bool,
     dataset: Optional[str],
     data_dir: Path,
+    experiment_name: Optional[str] = None,
+    manifest_path: Path = ERA5_TRAINING_MANIFEST_PATH,
+    model_name: str = "default",
+    reward_name: str = "default",
+    obs_name: str = "default",
 ) -> PpoTrainingCliOptions:
     return PpoTrainingCliOptions(
         total_timesteps=total_timesteps,
@@ -246,7 +295,11 @@ def ppo_training_options(
         target_reach_radius=target_reach_radius,
         start_time=start_time,
         randomize_position=randomize_position,
-        randomize_time=randomize_time,
         dataset=dataset,
         data_dir=data_dir,
+        experiment_name=experiment_name.strip() if experiment_name else None,
+        manifest_path=manifest_path,
+        model_name=model_name,
+        reward_name=reward_name,
+        obs_name=obs_name,
     )

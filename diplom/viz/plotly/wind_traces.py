@@ -68,6 +68,9 @@ def build_wind_cone_traces(
     origin_lat: Optional[float] = None,
     origin_lon: Optional[float] = None,
     show_colorbar: bool = False,
+    show_calm: bool = True,
+    cone_opacity: float = 1.0,
+    cone_scale: float = 1.0,
 ) -> list[go.BaseTraceType]:
     """Построить Plotly Cone-traces поля ветра на 3D-сетке ERA5."""
     plot_time = np.datetime64(time, "ns")
@@ -142,6 +145,8 @@ def build_wind_cone_traces(
     north = vy * scale_amp
     up = wz * scale_amp
 
+    cone_sizeref_effective = float(cone_sizeref) * float(cone_scale)
+
     cs_raw = cone_azimuth_colorscale if cone_azimuth_colorscale is not None else DEFAULT_CONE_AZIMUTH_COLORSCALE
     use_reverse = cone_azimuth_reversescale and isinstance(cs_raw, str)
 
@@ -167,7 +172,7 @@ def build_wind_cone_traces(
     traces: list[go.BaseTraceType] = []
 
     idx_calm = np.flatnonzero(calm)
-    if idx_calm.size > 0:
+    if show_calm and idx_calm.size > 0:
         flat_cs = [[0.0, _CALM_RGB], [1.0, _CALM_RGB]]
         traces.append(
             go.Cone(
@@ -181,8 +186,9 @@ def build_wind_cone_traces(
                 cmin=0.0,
                 cmax=1.0,
                 sizemode="absolute",
-                sizeref=float(cone_sizeref),
+                sizeref=cone_sizeref_effective,
                 anchor="tail",
+                opacity=float(cone_opacity),
                 hovertemplate="%{text}<extra></extra>",
                 text=hover_for_indices(idx_calm),
                 name="Штиль",
@@ -217,8 +223,9 @@ def build_wind_cone_traces(
                     cmin=0.0,
                     cmax=1.0,
                     sizemode="absolute",
-                    sizeref=float(cone_sizeref),
+                    sizeref=cone_sizeref_effective,
                     anchor="tail",
+                    opacity=float(cone_opacity),
                     hovertemplate="%{text}<extra></extra>",
                     text=hover_for_indices(sel),
                     showlegend=False,

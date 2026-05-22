@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import traceback
 import webbrowser
 from multiprocessing import get_context
 from pathlib import Path
@@ -96,7 +97,13 @@ class TrajectoryVisualizationCallback(BaseCallback):
                     n_envs=int(getattr(self.training_env, "num_envs", 1)),
                     world_bounds=self._world_bounds,
                 )
+            if self.verbose:
+                mode = "shared socket" if isinstance(self._render_queue, str) else "local worker"
+                print(  # noqa: T201
+                    f"[trajectory_viz] рендер включён ({mode}) → {self._output_dir.resolve()}"
+                )
         except Exception:  # noqa: BLE001
+            traceback.print_exc()
             self._render_queue = None
             self._render_process = None
 

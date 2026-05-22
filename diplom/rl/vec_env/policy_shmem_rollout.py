@@ -184,6 +184,7 @@ def _policy_shmem_rollout_worker(
     n_envs: int,
     obs_shape: tuple[int, ...],
     act_shape: tuple[int, ...],
+    model_name: str,
 ) -> None:
     from stable_baselines3.common.env_util import is_wrapped
 
@@ -232,7 +233,7 @@ def _policy_shmem_rollout_worker(
 
     try:
         env = _patch_env(env_fn_wrapper.var())
-        policy = build_worker_policy(env)
+        policy = build_worker_policy(env, model_name=model_name)
         policy.set_training_mode(False)
         current_obs: np.ndarray | None = None
 
@@ -319,6 +320,7 @@ class PolicyShmemSubprocVecEnv(VecEnv):
         env_fns: list[Callable[[], gym.Env]],
         *,
         rollout_steps: int,
+        model_name: str = "default",
         start_method: str | None = "spawn",
     ) -> None:
         if rollout_steps <= 0:
@@ -327,6 +329,7 @@ class PolicyShmemSubprocVecEnv(VecEnv):
         self.waiting = False
         self.closed = False
         self.rollout_steps = int(rollout_steps)
+        self.model_name = model_name
         n_envs = len(env_fns)
         if n_envs == 0:
             raise ValueError("PolicyShmemSubprocVecEnv requires at least one environment")
@@ -417,6 +420,7 @@ class PolicyShmemSubprocVecEnv(VecEnv):
                 n_envs,
                 obs_shape,
                 act_shape,
+                self.model_name,
             )
             process = ctx.Process(target=_policy_shmem_rollout_worker, args=args, daemon=True)  # type: ignore[attr-defined]
             process.start()

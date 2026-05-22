@@ -1,27 +1,32 @@
-"""Общие гиперпараметры MlpPolicy для main-процесса и worker rollout."""
+"""Общие хелперы PPO-политики (делегируют в diplom.rl.ppo.models)."""
 
 from __future__ import annotations
 
-PPO_NET_ARCH: dict[str, list[int]] = {"pi": [128, 128], "vf": [128, 128]}
-# σ ≈ exp(-1.5) ≈ 0.22 при action_limit=5; дальше держим ClipLogStdCallback.
-PPO_LOG_STD_INIT: float = -1.5
-PPO_LOG_STD_MIN: float = -1.609  # exp ≈ 0.20
-PPO_LOG_STD_MAX: float = -0.693  # exp ≈ 0.50
+from typing import Any
+
+from diplom.rl.ppo.models import get_model_spec
 
 
-def build_ppo_policy_kwargs() -> dict:
-    return {
-        "net_arch": PPO_NET_ARCH,
-        "log_std_init": PPO_LOG_STD_INIT,
-    }
+def build_ppo_policy_kwargs(model_name: str = "default") -> dict[str, Any]:
+    return get_model_spec(model_name).build_policy_kwargs()
 
 
-def clamp_policy_log_std(model: object) -> None:
-    """Ограничить learnable log_std политики (σ в [PPO_LOG_STD_MIN, PPO_LOG_STD_MAX])."""
+def clamp_policy_log_std(
+    model: object,
+    *,
+    log_std_min: float | None = None,
+    log_std_max: float | None = None,
+    model_name: str = "default",
+) -> None:
+    """Ограничить learnable log_std политики."""
     import torch
+
+    spec = get_model_spec(model_name)
+    lo = spec.log_std_min if log_std_min is None else log_std_min
+    hi = spec.log_std_max if log_std_max is None else log_std_max
 
     policy = getattr(model, "policy", None)
     if policy is None or not hasattr(policy, "log_std"):
         return
     with torch.no_grad():
-        policy.log_std.clamp_(PPO_LOG_STD_MIN, PPO_LOG_STD_MAX)
+        policy.log_std.clamp_(lo, hi)

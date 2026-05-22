@@ -317,6 +317,51 @@ def _figure_payload(fig: go.Figure) -> dict:
     return payload
 
 
+def traces_to_plotly_data(traces: List[go.BaseTraceType]) -> list[dict]:
+    if not traces:
+        return []
+    return json.loads(go.Figure(data=traces).to_json())["data"]
+
+
+def build_layout_dict(title: str, bounds: Optional[TrajectoryBounds] = None) -> dict:
+    fig = go.Figure()
+    apply_figure_layout(fig, title, bounds)
+    return _figure_payload(fig)["layout"]
+
+
+def _wind_layer_path(html_path: Path) -> Path:
+    return _live_data_dir(html_path) / f"{html_path.stem}_wind.js"
+
+
+def _wind_layer_key_path(html_path: Path) -> Path:
+    return _live_data_dir(html_path) / f"{html_path.stem}_wind.key"
+
+
+def _wind_layer_js_url(html_path: Path) -> str:
+    return f"{LIVE_DATA_SUBDIR}/{html_path.stem}_wind.js"
+
+
+def write_wind_layer(html_path: Path, wind_traces: List[go.BaseTraceType], wind_key: int) -> bool:
+    """Записать статичный слой конусов ветра (один раз на wind_key)."""
+    key_path = _wind_layer_key_path(html_path)
+    layer_path = _wind_layer_path(html_path)
+    key_str = str(wind_key)
+    if key_path.is_file() and key_path.read_text(encoding="utf-8").strip() == key_str and layer_path.is_file():
+        return False
+
+    layer_path.parent.mkdir(parents=True, exist_ok=True)
+    data_json = json.dumps(traces_to_plotly_data(wind_traces), ensure_ascii=False)
+    content = (
+        f"window.__TRAJECTORY_WIND_KEY__={wind_key};"
+        f"window.__TRAJECTORY_WIND_DATA__={data_json};"
+    )
+    tmp_path = layer_path.with_suffix(".tmp.js")
+    tmp_path.write_text(content, encoding="utf-8")
+    tmp_path.replace(layer_path)
+    key_path.write_text(key_str, encoding="utf-8")
+    return True
+
+
 def _live_data_dir(html_path: Path) -> Path:
     return html_path.parent / LIVE_DATA_SUBDIR
 
@@ -329,14 +374,50 @@ def _live_data_js_url(html_path: Path, slot: int) -> str:
     return f"{LIVE_DATA_SUBDIR}/{html_path.stem}_d{slot}.js"
 
 
-def _write_live_data(fig: go.Figure, html_path: Path, generation: int) -> None:
+def _write_live_data(
+    fig: go.Figure,
+    html_path: Path,
+    generation: int,
+    *,
+    wind_key: int | None = None,
+) -> None:
     slot = generation % 2
     path = _live_data_path(html_path, slot)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(_figure_payload(fig), ensure_ascii=False)
+    payload = _figure_payload(fig)
+    figure_json = json.dumps({"data": payload["data"], "layout": payload["layout"]}, ensure_ascii=False)
+    wind_key_json = json.dumps(wind_key)
     content = (
         f"window.__TRAJECTORY_GENERATION__={generation};"
-        f"window.__TRAJECTORY_FIGURE__={payload};"
+        f"window.__TRAJECTORY_WIND_KEY__={wind_key_json};"
+        f"window.__TRAJECTORY_FIGURE__={figure_json};"
+    )
+    tmp_path = path.with_suffix(f".tmp{slot}.js")
+    tmp_path.write_text(content, encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def _write_live_trajectory_data(
+    html_path: Path,
+    generation: int,
+    *,
+    trajectory_traces: List[go.BaseTraceType],
+    layout: dict,
+    wind_key: int | None = None,
+) -> None:
+    """Ping-pong слот только с траекториями (ветер — отдельный _wind.js)."""
+    slot = generation % 2
+    path = _live_data_path(html_path, slot)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure_json = json.dumps(
+        {"data": traces_to_plotly_data(trajectory_traces), "layout": layout},
+        ensure_ascii=False,
+    )
+    wind_key_json = json.dumps(wind_key)
+    content = (
+        f"window.__TRAJECTORY_GENERATION__={generation};"
+        f"window.__TRAJECTORY_WIND_KEY__={wind_key_json};"
+        f"window.__TRAJECTORY_FIGURE__={figure_json};"
     )
     tmp_path = path.with_suffix(f".tmp{slot}.js")
     tmp_path.write_text(content, encoding="utf-8")
@@ -355,25 +436,64 @@ def save_live_figure(
     generation: int,
     poll_interval_ms: int = DEFAULT_LIVE_POLL_INTERVAL_MS,
 ) -> None:
-    """Сохранить live-viewer: HTML-оболочка + ping-pong data.js (file://-safe).
-
-    Браузер редко опрашивает data-слоты и обновляет график через Plotly.react
-    только при новых данных. Опрос останавливается, когда вкладка скрыта.
-    """
+    """Сохранить live-viewer: HTML-оболочка + ping-pong data.js (file://-safe)."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_live_data(fig, path, generation)
     _cleanup_legacy_live_data(path)
+    _write_live_html_shell(path, poll_interval_ms=poll_interval_ms, has_wind_layer=False)
 
+
+def save_live_trajectory_update(
+    path: Path,
+    *,
+    generation: int,
+    trajectory_traces: List[go.BaseTraceType],
+    title: str,
+    bounds: Optional[TrajectoryBounds],
+    wind_traces: Optional[List[go.BaseTraceType]] = None,
+    wind_key: int | None = None,
+    poll_interval_ms: int = DEFAULT_LIVE_POLL_INTERVAL_MS,
+) -> None:
+    """Обновить только траектории; конусы ветра пишутся отдельно и переиспользуются."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    has_wind = wind_traces is not None and wind_key is not None
+    if has_wind:
+        write_wind_layer(path, wind_traces, wind_key)
+    layout = build_layout_dict(title, bounds)
+    _write_live_trajectory_data(
+        path,
+        generation,
+        trajectory_traces=trajectory_traces,
+        layout=layout,
+        wind_key=wind_key if has_wind else None,
+    )
+    _cleanup_legacy_live_data(path)
+    _write_live_html_shell(path, poll_interval_ms=poll_interval_ms, has_wind_layer=has_wind)
+
+
+def _write_live_html_shell(
+    path: Path,
+    *,
+    poll_interval_ms: int,
+    has_wind_layer: bool,
+) -> None:
     data_js = json.dumps([_live_data_js_url(path, 0), _live_data_js_url(path, 1)])
+    wind_js = json.dumps(_wind_layer_js_url(path) if has_wind_layer else None)
     html = (
         _LIVE_VIEWER_HTML
         .replace("__DATA_JS__", data_js)
+        .replace("__WIND_JS__", wind_js)
         .replace("__POLL_MS__", str(poll_interval_ms))
         .replace("__STORAGE_KEY__", json.dumps(path.stem))
     )
     html_text = path.read_text(encoding="utf-8") if path.exists() else ""
-    if not path.exists() or f"{LIVE_DATA_SUBDIR}/" not in html_text:
+    if (
+        not path.exists()
+        or f"{LIVE_DATA_SUBDIR}/" not in html_text
+        or (has_wind_layer and "WIND_JS" not in html_text)
+    ):
         path.write_text(html, encoding="utf-8")
 
 
@@ -398,6 +518,7 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
   <div id="status">загрузка…</div>
   <script>
     const DATA_JS = __DATA_JS__;
+    const WIND_JS = __WIND_JS__;
     const POLL_MS = __POLL_MS__;
     const STORAGE_KEY = __STORAGE_KEY__;
     const CAMERA_KEY = "trajectory_camera:" + STORAGE_KEY;
@@ -407,6 +528,8 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
     let plotReady = false;
     let pollTimer = null;
     let polling = false;
+    let windData = [];
+    let loadedWindKey = null;
 
     function loadStoredCamera() {
       try {
@@ -447,17 +570,37 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
       });
     }
 
+    async function loadWindLayer(windKey) {
+      if (!WIND_JS || windKey == null) {
+        windData = [];
+        loadedWindKey = null;
+        return;
+      }
+      if (loadedWindKey === windKey) return;
+      window.__TRAJECTORY_WIND_KEY__ = undefined;
+      window.__TRAJECTORY_WIND_DATA__ = undefined;
+      if (!(await loadScript(WIND_JS))) {
+        windData = [];
+        loadedWindKey = null;
+        return;
+      }
+      windData = window.__TRAJECTORY_WIND_DATA__ || [];
+      loadedWindKey = window.__TRAJECTORY_WIND_KEY__ ?? windKey;
+    }
+
     async function fetchLatestFigure() {
       let best = null;
       for (let i = 0; i < DATA_JS.length; i++) {
         window.__TRAJECTORY_GENERATION__ = undefined;
+        window.__TRAJECTORY_WIND_KEY__ = undefined;
         window.__TRAJECTORY_FIGURE__ = undefined;
         if (!(await loadScript(DATA_JS[i]))) continue;
         const generation = window.__TRAJECTORY_GENERATION__;
+        const windKey = window.__TRAJECTORY_WIND_KEY__;
         const fig = window.__TRAJECTORY_FIGURE__;
         if (!fig || generation == null) continue;
         if (!best || generation > best.generation) {
-          best = { generation: generation, fig: fig };
+          best = { generation: generation, windKey: windKey, fig: fig };
         }
       }
       return best;
@@ -470,12 +613,15 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
         const latest = await fetchLatestFigure();
         if (!latest || latest.generation === lastGeneration) return;
 
+        await loadWindLayer(latest.windKey);
+
         const camera = plotReady ? readCamera(plotDiv) : loadStoredCamera();
         if (camera) saveCamera(camera);
         const layout = withCamera(latest.fig.layout, camera || loadStoredCamera());
+        const data = windData.concat(latest.fig.data);
 
         if (!plotReady) {
-          await Plotly.newPlot(plotDiv, latest.fig.data, layout, { responsive: true });
+          await Plotly.newPlot(plotDiv, data, layout, { responsive: true });
           plotReady = true;
           plotDiv.on("plotly_relayout", function(eventData) {
             if (!eventData) return;
@@ -484,7 +630,7 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
             }
           });
         } else {
-          await Plotly.react(plotDiv, latest.fig.data, layout);
+          await Plotly.react(plotDiv, data, layout);
         }
         lastGeneration = latest.generation;
         statusEl.textContent = "live · каждые " + (POLL_MS / 1000) + " с";
@@ -553,7 +699,11 @@ def _format_step_hover(step: dict, step_idx: int, *, title: str | None = None) -
     return "<br>".join(lines)
 
 
-def build_episode_traces(episode: EpisodeVizData) -> List[go.BaseTraceType]:
+def build_episode_traces(
+    episode: EpisodeVizData,
+    *,
+    line_width: int = 4,
+) -> List[go.BaseTraceType]:
     if not episode.steps:
         return []
 
@@ -575,7 +725,7 @@ def build_episode_traces(episode: EpisodeVizData) -> List[go.BaseTraceType]:
             x=x, y=y, z=z,
             mode="lines",
             name=name,
-            line=dict(color=progress, colorscale=line_colorscale, width=4),
+            line=dict(color=progress, colorscale=line_colorscale, width=line_width),
             text=hover_text,
             hovertemplate="%{text}<extra></extra>",
             legendgroup=group,

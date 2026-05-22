@@ -10,8 +10,12 @@ from diplom.cli.training_options import (
     DATA_DIR_OPTION,
     DATASET_OPTION,
     DEVICE_OPTION,
+    EXPERIMENT_OPTION,
+    MANIFEST_OPTION,
+    MODEL_OPTION,
+    OBS_OPTION,
     RANDOMIZE_POSITION_OPTION,
-    RANDOMIZE_TIME_OPTION,
+    REWARD_OPTION,
     SEED_OPTION,
     START_TIME_OPTION,
     TARGET_RADIUS_OPTION,
@@ -33,7 +37,6 @@ def train_ppo(
     target_reach_radius: float = TARGET_RADIUS_OPTION,
     start_time: Optional[datetime] = START_TIME_OPTION,
     randomize_position: bool = RANDOMIZE_POSITION_OPTION,
-    randomize_time: bool = RANDOMIZE_TIME_OPTION,
     in_process: bool = typer.Option(
         False,
         "--in-process",
@@ -54,12 +57,17 @@ def train_ppo(
         False,
         "--resume",
         help=(
-            "Продолжить из {logdir}/{датасет}/ppo_model.zip: та же модель, тот же PPO_N, "
+            "Продолжить из {logdir}/{experiment|датасет}/ppo_model.zip: та же модель, тот же PPO_N, "
             "счётчик шагов и кривая TensorBoard без сброса"
         ),
     ),
     dataset: Optional[str] = DATASET_OPTION,
     data_dir: Path = DATA_DIR_OPTION,
+    experiment: Optional[str] = EXPERIMENT_OPTION,
+    manifest_path: Path = MANIFEST_OPTION,
+    model: str = MODEL_OPTION,
+    reward: str = REWARD_OPTION,
+    obs: str = OBS_OPTION,
 ) -> None:
     """Запустить обучение PPO-модели."""
     from diplom.dev.profiling.runner import PROFILE_N_ENVS
@@ -82,9 +90,13 @@ def train_ppo(
         target_reach_radius=target_reach_radius,
         start_time=start_time,
         randomize_position=randomize_position,
-        randomize_time=randomize_time,
         dataset=dataset,
         data_dir=data_dir,
+        experiment_name=experiment,
+        manifest_path=manifest_path,
+        model_name=model,
+        reward_name=reward,
+        obs_name=obs,
     )
     app_config = build_ppo_app_config(opts)
     try:

@@ -13,11 +13,6 @@ class EpisodeStatsCallback(BaseCallback):
         self._ep_returns: list[float] = []
         self._ep_lengths: list[float] = []
         self._successes: list[float] = []
-        self._ever_succeeded = False
-
-    @property
-    def ever_succeeded(self) -> bool:
-        return self._ever_succeeded
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos")
@@ -26,8 +21,6 @@ class EpisodeStatsCallback(BaseCallback):
         for info in infos:
             if not info:
                 continue
-            if info.get("terminated"):
-                self._ever_succeeded = True
             episode = info.get("episode")
             if episode is not None:
                 self._ep_returns.append(float(episode["r"]))

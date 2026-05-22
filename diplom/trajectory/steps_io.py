@@ -145,13 +145,22 @@ def accumulate_position_extents(
     steps_path: Path,
     min_xyz: np.ndarray | None,
     max_xyz: np.ndarray | None,
+    *,
+    step_count: int | None = None,
+    max_samples: int = 4_000,
 ) -> tuple[np.ndarray | None, np.ndarray | None]:
     """Обновить min/max координат по JSONL без хранения всех точек в RAM."""
     if not steps_path.is_file():
         return min_xyz, max_xyz
 
+    stride = 1
+    if step_count is not None and step_count > max_samples:
+        stride = max(1, math.ceil(step_count / max_samples))
+
     with steps_path.open(encoding="utf-8") as handle:
-        for line in handle:
+        for line_idx, line in enumerate(handle):
+            if stride > 1 and line_idx % stride != 0:
+                continue
             line = line.strip()
             if not line:
                 continue
@@ -180,19 +189,25 @@ def include_position_in_extents(
 
 
 def load_last_target_from_jsonl(steps_path: Path) -> list[float] | None:
-    """Вернуть target_position последнего шага (один json.loads в конце файла)."""
+    """Вернуть target_position последнего шага (читаем хвост файла)."""
     if not steps_path.is_file():
         return None
 
-    last_line: str | None = None
-    with steps_path.open(encoding="utf-8") as handle:
-        for line in handle:
-            stripped = line.strip()
-            if stripped:
-                last_line = stripped
-    if last_line is None:
-        return None
-    return json.loads(last_line).get("target_position")
+    with steps_path.open("rb") as handle:
+        handle.seek(0, 2)
+        size = handle.tell()
+        if size == 0:
+            return None
+        read_size = min(size, 65_536)
+        handle.seek(-read_size, 2)
+        chunk = handle.read(read_size)
+
+    lines = chunk.splitlines()
+    for raw_line in reversed(lines):
+        line = raw_line.decode("utf-8", errors="ignore").strip()
+        if line:
+            return json.loads(line).get("target_position")
+    return None
 
 
 def cleanup_steps_dir(output_dir: Path) -> None:

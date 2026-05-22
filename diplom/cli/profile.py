@@ -14,7 +14,6 @@ from diplom.cli.training_options import (
     PROFILE_MAIN_OPTION,
     PROFILE_TRAJECTORY_OPTION,
     RANDOMIZE_POSITION_OPTION,
-    RANDOMIZE_TIME_OPTION,
     SEED_OPTION,
     START_TIME_OPTION,
     TARGET_RADIUS_OPTION,
@@ -62,7 +61,6 @@ def profile_ppo_mem(
     target_reach_radius: float = TARGET_RADIUS_OPTION,
     start_time: Optional[datetime] = START_TIME_OPTION,
     randomize_position: bool = RANDOMIZE_POSITION_OPTION,
-    randomize_time: bool = RANDOMIZE_TIME_OPTION,
     n_envs: int = n_envs_option(profile=True),
     single_process: bool = typer.Option(
         False,
@@ -110,7 +108,6 @@ def profile_ppo_mem(
             target_reach_radius=target_reach_radius,
             start_time=start_time,
             randomize_position=randomize_position,
-            randomize_time=randomize_time,
             dataset=dataset,
             data_dir=data_dir,
         )
@@ -156,7 +153,6 @@ def profile_ppo_cpu(
     target_reach_radius: float = TARGET_RADIUS_OPTION,
     start_time: Optional[datetime] = START_TIME_OPTION,
     randomize_position: bool = RANDOMIZE_POSITION_OPTION,
-    randomize_time: bool = RANDOMIZE_TIME_OPTION,
     n_envs: int = n_envs_option(profile=True),
     single_process: bool = typer.Option(
         False,
@@ -206,7 +202,6 @@ def profile_ppo_cpu(
             target_reach_radius=target_reach_radius,
             start_time=start_time,
             randomize_position=randomize_position,
-            randomize_time=randomize_time,
             dataset=dataset,
             data_dir=data_dir,
         )

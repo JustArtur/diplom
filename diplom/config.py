@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypeAlias
 
 import numpy as np
 
@@ -11,11 +12,6 @@ from diplom.envs.constants import (
     MAX_EPISODE_STEPS,
     TARGET_REACH_RADIUS,
     TRAIN_INITIAL_POSITION_DELTA,
-    TRAIN_EPISODE_LENGTH_CURRICULUM_INTERVAL,
-    TRAIN_EPISODE_LENGTH_CURRICULUM_INTERVAL_GROWTH,
-    TRAIN_EPISODE_LENGTH_CURRICULUM_MAX,
-    TRAIN_EPISODE_LENGTH_CURRICULUM_MIN,
-    TRAIN_EPISODE_LENGTH_CURRICULUM_STEP,
     TRAIN_MAX_EPISODE_STEPS,
     TRAIN_TARGET_POSITION_DELTA,
 )
@@ -131,10 +127,6 @@ class EnvironmentConfig:
     initial_air_weight: float = DEFAULT_AIR_WEIGHT
     # Включать ли рандомизацию стартовой позиции и цели в train-режиме.
     randomize_start_state: bool = False
-    # Включать ли рандомизацию стартового времени в train-режиме.
-    randomize_start_time: bool = False
-    # Ширина окна случайного стартового времени от начала диапазона датасета.
-    train_start_time_delta: np.timedelta64 = np.timedelta64(12, "h")
     # Амплитуда случайного смещения стартовой позиции для train-эпизодов.
     train_initial_position_delta: np.ndarray = field(
         default_factory=lambda: TRAIN_INITIAL_POSITION_DELTA.copy()
@@ -157,6 +149,10 @@ class EnvironmentConfig:
     trajectory_steps_dir: Path | None = None
     # Сколько завершённых эпизодов хранить на диске для одной среды (старые удаляются).
     trajectory_max_history: int = 3
+    # Имя reward-функции из diplom.envs.rewards (флаг CLI --reward).
+    reward_name: str = "default"
+    # Имя obs-модели из diplom.envs.observations (флаг CLI --obs).
+    obs_name: str = "default"
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,12 +164,38 @@ class SimulationConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class EpisodeLengthCurriculumStage:
+    """Этап куррикулума длины эпизода.
+
+    Активен, пока ``from_timesteps <= num_timesteps < until_timesteps``.
+    ``until_timesteps=None`` — без верхней границы (только последний этап).
+    """
+
+    from_timesteps: int
+    until_timesteps: int | None
+    max_episode_steps: int
+
+
+EpisodeLengthCurriculumStageInput: TypeAlias = (
+    EpisodeLengthCurriculumStage | tuple[int, int | None, int]
+)
+
+
+DEFAULT_EPISODE_LENGTH_CURRICULUM_STAGES: tuple[EpisodeLengthCurriculumStage, ...] = (
+    EpisodeLengthCurriculumStage(0, 5_000_000, 300_000),
+    EpisodeLengthCurriculumStage(5_000_000, 15_000_000, 600_000),
+    EpisodeLengthCurriculumStage(15_000_000, 25_000_000, 900_000),
+    EpisodeLengthCurriculumStage(25_000_000, None, 1_250_000),
+)
+
+
+@dataclass(frozen=True, slots=True)
 class TrainingConfig:
     # Общее число шагов обучения PPO.
     total_timesteps: int = 20_000_000
     # Seed для воспроизводимости.
     seed: int = 0
-    # Родительский каталог run-ов; фактический путь — {logdir}/{имя_датасета}/.
+    # Родительский каталог run-ов; фактический путь — {logdir}/{experiment_name|датасет}/.
     logdir: Path = Path("ppo")
     # Родительский каталог для profile-ppo-mem / profile-ppo-cpu.
     profile_logdir: Path = Path("profile_ppo")
@@ -184,6 +206,8 @@ class TrainingConfig:
     device: str = "cpu"
     # Уровень логирования PPO в консоль (как verbose в Stable-Baselines3): 0 — тихо, 1 — таблица метрик.
     verbose: int = 1
+    # Имя PPO-модели из diplom.rl.ppo.models (флаг CLI --model).
+    model_name: str = "default"
     # n_steps PPO на среду за rollout (должен совпадать с n_steps в PPO(...)).
     ppo_n_steps: int = 4096
     # Энтропийный коэффициент PPO (меньше — меньше раздувается log_std).
@@ -195,17 +219,13 @@ class TrainingConfig:
     learning_rate: float = 1e-4
     # Ограничение нормы градиента (стабильность при всплесках KL).
     max_grad_norm: float = 0.3
-    # По мере timesteps расширять окно рандомизации старта/цели (см. curriculum_callbacks).
-    curriculum_enabled: bool = True
-    # По мере timesteps увеличивать max_episode_steps (300k +300k до 2.5M).
+    # Имя эксперимента (каталог под logdir); None — stem NetCDF-датасета (CLI --experiment).
+    experiment_name: str | None = None
+    # Этапы куррикулума длины эпизода: (from_ts, until_ts, max_episode_steps); until_ts=None — навсегда.
     episode_length_curriculum_enabled: bool = True
-    episode_length_curriculum_min: int = TRAIN_EPISODE_LENGTH_CURRICULUM_MIN
-    episode_length_curriculum_max: int = TRAIN_EPISODE_LENGTH_CURRICULUM_MAX
-    episode_length_curriculum_step: int = TRAIN_EPISODE_LENGTH_CURRICULUM_STEP
-    episode_length_curriculum_interval: int = TRAIN_EPISODE_LENGTH_CURRICULUM_INTERVAL
-    episode_length_curriculum_interval_growth: int = TRAIN_EPISODE_LENGTH_CURRICULUM_INTERVAL_GROWTH
-    # Держать max_episode_steps на min, пока не будет хотя бы одного success.
-    episode_length_freeze_until_success: bool = False
+    episode_length_curriculum_stages: tuple[EpisodeLengthCurriculumStageInput, ...] = (
+        DEFAULT_EPISODE_LENGTH_CURRICULUM_STAGES
+    )
 
 
 DEFAULT_WINDOW_SIZE: tuple[int, int] = (2560, 1440)

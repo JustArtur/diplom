@@ -95,9 +95,43 @@ def era5_dataset_title(path: Path) -> str:
     return path.stem
 
 
-def training_logdir_for_dataset(dataset_path: Path, parent_logdir: Path) -> Path:
-    """Каталог артефактов обучения: ``{parent_logdir}/{имя_датасета}``."""
-    return parent_logdir / dataset_path.stem
+def training_logdir_for_dataset(
+    dataset_path: Path,
+    parent_logdir: Path,
+    *,
+    experiment_name: str | None = None,
+) -> Path:
+    """Каталог артефактов: ``{parent}/{experiment_name|dataset_stem}``."""
+    dir_name = (
+        experiment_name.strip()
+        if experiment_name and experiment_name.strip()
+        else dataset_path.stem
+    )
+    return parent_logdir / dir_name
+
+
+def resolve_dataset_reference(
+    reference: str | int,
+    *,
+    data_dir: Path = ERA5_TRAINING_DATA_DIR,
+    manifest_path: Path = ERA5_TRAINING_MANIFEST_PATH,
+) -> Path:
+    """Разрешить имя, путь или числовой id (#1 из datasets_manifest.toml) в NetCDF."""
+    if isinstance(reference, int) or str(reference).isdigit():
+        dataset_id = int(reference)
+        if not manifest_path.is_file():
+            raise ValueError(
+                f"Для --dataset {dataset_id} нужен манифест {manifest_path}"
+            )
+        from diplom.data.era5_manifest import load_training_manifest
+
+        manifest = load_training_manifest(manifest_path)
+        for spec in manifest.datasets:
+            if spec.id == dataset_id:
+                return resolve_era5_dataset_path(spec.stem, data_dir=data_dir)
+        ids = ", ".join(str(spec.id) for spec in manifest.datasets)
+        raise ValueError(f"Датасет id={dataset_id} не найден в манифесте. Доступные id: {ids}")
+    return resolve_era5_dataset_path(str(reference), data_dir=data_dir)
 
 
 def wind_plot_html_path(dataset_path: Path, output_dir: Path) -> Path:

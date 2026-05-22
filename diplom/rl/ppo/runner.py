@@ -21,12 +21,11 @@ from diplom.rl.callbacks.clip_log_std import ClipLogStdCallback
 from diplom.rl.callbacks.curriculum import (
     EntCoefScheduleCallback,
     TrainEpisodeLengthCurriculumCallback,
-    TrainPositionCurriculumCallback,
-    TrainTargetReachCurriculumCallback,
-    build_episode_length_curriculum_stages,
+    initial_episode_length_curriculum_max_steps,
 )
 from diplom.rl.callbacks.episode_stats import EpisodeStatsCallback
 from diplom.rl.callbacks.info_logging import InfoLoggingCallback
+from diplom.rl.ppo.models import get_model_spec
 from diplom.rl.ppo.policy import build_ppo_policy_kwargs
 from diplom.world import log_world_bounds
 from diplom.wind.factory import build_wind_interpolator
@@ -57,12 +56,15 @@ def _make_vec_env(
     *,
     force_dummy: bool = False,
     trajectory_steps_dir: Path | None = None,
+    model_name: str = "default",
 ) -> VecEnv:
     n_envs = max(1, config.training.n_envs)
     ensure_wind_interpolator_cache(config.wind.path)
     train_max_steps = config.environment.train_max_episode_steps
     if config.training.episode_length_curriculum_enabled:
-        train_max_steps = config.training.episode_length_curriculum_min
+        train_max_steps = initial_episode_length_curriculum_max_steps(
+            config.training.episode_length_curriculum_stages
+        )
     env_config = replace(
         config.environment,
         max_episode_steps=train_max_steps,
@@ -72,16 +74,21 @@ def _make_vec_env(
         partial(_env_factory, env_config=env_config, wind_config=config.wind, env_idx=env_idx)
         for env_idx in range(n_envs)
     ]
-    # partial — picklable, в отличие от lambda; именно это позволяет SubprocVecEnv
-    # передавать фабрику через pickle в дочерний процесс.
     if force_dummy or n_envs == 1:
         return DummyVecEnv(factories)
+
+    model_spec = get_model_spec(model_name)
+    if model_spec.recurrent:
+        from stable_baselines3.common.vec_env import SubprocVecEnv
+
+        return SubprocVecEnv(factories, start_method="spawn")
 
     from diplom.rl.vec_env.policy_shmem_rollout import PolicyShmemSubprocVecEnv
 
     return PolicyShmemSubprocVecEnv(
         factories,
         rollout_steps=config.training.ppo_n_steps,
+        model_name=model_name,
         start_method="spawn",
     )
 
@@ -157,7 +164,11 @@ def train_ppo(
     logdir.mkdir(parents=True, exist_ok=True)
     device = resolve_torch_device(config.training.device)
     ppo_verbose = config.training.verbose
+    model_spec = get_model_spec(config.training.model_name)
     print(f"[train_ppo] Using device={device}")  # noqa: T201
+    print(f"[train_ppo] PPO model: {model_spec.name} ({model_spec.policy_type})")  # noqa: T201
+    print(f"[train_ppo] Reward: {config.environment.reward_name}")  # noqa: T201
+    print(f"[train_ppo] Obs: {config.environment.obs_name}")  # noqa: T201
     print(f"[train_ppo] Dataset: {config.wind.path.name}")  # noqa: T201
     print(f"[train_ppo] Log directory: {logdir}")  # noqa: T201
 
@@ -176,12 +187,19 @@ def train_ppo(
     print(f"[train_ppo] Run directory: {run_dir}")  # noqa: T201
 
     trajectory_steps_dir = traj_dir if enable_trajectory_viz else None
+    if enable_trajectory_viz:
+        print(f"[train_ppo] Trajectory viz: {traj_dir.resolve()}")  # noqa: T201
+    else:
+        print("[train_ppo] Trajectory viz: off (--no-trajectories)")  # noqa: T201
     vec_env = _make_vec_env(
         config,
         force_dummy=force_dummy_vec_env,
         trajectory_steps_dir=trajectory_steps_dir,
+        model_name=config.training.model_name,
     )
-    if not force_dummy_vec_env and config.training.n_envs > 1:
+    if model_spec.recurrent and not force_dummy_vec_env and config.training.n_envs > 1:
+        print("[train_ppo] VecEnv: SubprocVecEnv (RecurrentPPO, без worker rollout)")  # noqa: T201
+    elif not force_dummy_vec_env and config.training.n_envs > 1:
         print("[train_ppo] VecEnv: PolicyShmemSubprocVecEnv (worker policy + shmem)")  # noqa: T201
     info_callback = InfoLoggingCallback()
     episode_stats_callback = EpisodeStatsCallback()
@@ -208,12 +226,21 @@ def train_ppo(
         else None
     )
 
-    use_worker_rollout = not force_dummy_vec_env and config.training.n_envs > 1
-    ppo_cls: type[PPO] = PPO
-    if use_worker_rollout:
+    use_worker_rollout = (
+        not force_dummy_vec_env
+        and config.training.n_envs > 1
+        and not model_spec.recurrent
+    )
+    if model_spec.recurrent:
+        from sb3_contrib import RecurrentPPO
+
+        ppo_cls: type[PPO] = RecurrentPPO
+    elif use_worker_rollout:
         from diplom.rl.ppo.worker_rollout import WorkerRolloutPPO
 
         ppo_cls = WorkerRolloutPPO
+    else:
+        ppo_cls = PPO
 
     model: PPO
 
@@ -235,7 +262,7 @@ def train_ppo(
                     "обучаем новую модель (старый файл будет перезаписан в конце)"
                 )
             model = ppo_cls(
-                policy="MlpPolicy",
+                policy=model_spec.policy_type,
                 env=vec_env,
                 # Собираем больше опыта перед каждым обновлением — лучше
                 # использование данных и меньше накладных расходов обновления.
@@ -250,7 +277,7 @@ def train_ppo(
                 ent_coef=config.training.ent_coef_end,
                 vf_coef=0.5,
                 max_grad_norm=config.training.max_grad_norm,
-                policy_kwargs=build_ppo_policy_kwargs(),
+                policy_kwargs=build_ppo_policy_kwargs(config.training.model_name),
                 verbose=ppo_verbose,
                 tensorboard_log=str(run_dir),
                 seed=config.training.seed,
@@ -261,32 +288,17 @@ def train_ppo(
         learn_callbacks: list[BaseCallback] = [
             info_callback,
             episode_stats_callback,
-            ClipLogStdCallback(),
+            ClipLogStdCallback(model_name=config.training.model_name),
             EntCoefScheduleCallback(
                 start=config.training.ent_coef_start,
                 end=config.training.ent_coef_end,
                 decay_timesteps=config.training.ent_coef_decay_timesteps,
             ),
         ]
-        if config.training.curriculum_enabled and config.environment.randomize_start_state:
-            learn_callbacks.append(TrainPositionCurriculumCallback(verbose=max(0, ppo_verbose - 1)))
-            learn_callbacks.append(
-                TrainTargetReachCurriculumCallback(verbose=max(0, ppo_verbose - 1))
-            )
         if config.training.episode_length_curriculum_enabled:
-            ep_len_stages = build_episode_length_curriculum_stages(
-                min_steps=config.training.episode_length_curriculum_min,
-                max_steps=config.training.episode_length_curriculum_max,
-                step=config.training.episode_length_curriculum_step,
-                interval=config.training.episode_length_curriculum_interval,
-                interval_growth=config.training.episode_length_curriculum_interval_growth,
-            )
             learn_callbacks.append(
                 TrainEpisodeLengthCurriculumCallback(
-                    stages=ep_len_stages,
-                    min_steps=config.training.episode_length_curriculum_min,
-                    freeze_until_success=config.training.episode_length_freeze_until_success,
-                    episode_stats=episode_stats_callback,
+                    stages=config.training.episode_length_curriculum_stages,
                     verbose=max(0, ppo_verbose - 1),
                 )
             )
