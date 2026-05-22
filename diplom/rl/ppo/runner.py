@@ -220,6 +220,7 @@ def train_ppo(
         TrajectoryVisualizationCallback(
             output_dir=traj_dir,
             wind_dataset_path=config.wind.path,
+            show_wind_cones=config.environment.trajectory_show_wind_cones,
             open_in_browser=open_trajectory_viz,
         )
         if enable_trajectory_viz

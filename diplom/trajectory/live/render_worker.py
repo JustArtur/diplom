@@ -53,6 +53,7 @@ class TrajectoryRenderRequest:
     current_step_counts: dict[int, int]
     world_bounds: WorldBounds | None = None
     wind_dataset_path: Path | None = None
+    show_wind_cones: bool = False
 
 
 _wind_interp = None
@@ -353,10 +354,11 @@ def _snapshot_bounds(request: TrajectoryRenderRequest) -> TrajectoryBounds:
 def _resolve_wind_overlay(
     *,
     wind_dataset_path: Path | None,
+    show_wind_cones: bool,
     current_steps: list[dict[str, Any]],
     history: list[EpisodeVizData],
 ) -> tuple[list | None, int | None]:
-    if wind_dataset_path is None:
+    if not show_wind_cones or wind_dataset_path is None:
         return None, None
     sim_time = latest_sim_time(current_steps, history)
     if sim_time is None:
@@ -398,6 +400,7 @@ def _render_snapshot(
             live_step_count = request.current_step_counts.get(env_idx, len(current_env_steps))
             wind_traces, wind_key = _resolve_wind_overlay(
                 wind_dataset_path=request.wind_dataset_path,
+                show_wind_cones=request.show_wind_cones,
                 current_steps=current_env_steps,
                 history=history_items,
             )

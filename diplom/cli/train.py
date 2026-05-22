@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -52,6 +53,11 @@ def train_ppo(
         "--open-trajectories/--no-open-trajectories",
         help="Открыть HTML live-viewer траекторий в браузере при старте обучения (нужны --trajectories)",
     ),
+    trajectory_wind_cones: bool = typer.Option(
+        False,
+        "--trajectory-wind-cones/--no-trajectory-wind-cones",
+        help="Конусы ветра на HTML-графике траекторий (нужны --trajectories)",
+    ),
     verbose: int = VERBOSE_OPTION,
     resume: bool = typer.Option(
         False,
@@ -99,6 +105,14 @@ def train_ppo(
         obs_name=obs,
     )
     app_config = build_ppo_app_config(opts)
+    if trajectory_wind_cones:
+        app_config = replace(
+            app_config,
+            environment=replace(
+                app_config.environment,
+                trajectory_show_wind_cones=True,
+            ),
+        )
     try:
         run_train_ppo(
             app_config,

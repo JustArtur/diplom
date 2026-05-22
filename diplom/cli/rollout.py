@@ -50,6 +50,11 @@ def rollout(
         help="Путь для сохранения интерактивного 3D-графика траекторий (HTML). "
              "Если не указан — график не строится.",
     ),
+    plot_wind_cones: bool = typer.Option(
+        False,
+        "--plot-wind-cones/--no-plot-wind-cones",
+        help="Показать конусы ветра на графике траекторий (нужен --plot)",
+    ),
     start_time: Optional[datetime] = START_TIME_OPTION,
     device: str = typer.Option(
         DEFAULT_TRAINING_CONFIG.device,
@@ -122,6 +127,7 @@ def rollout(
                 title=f"Rollout · {model_path.name} · {episodes} эпизодов",
                 wind_interpolator=wind_interpolator,
                 output_path=plot_output,
+                show_wind_cones=plot_wind_cones,
             )
         finally:
             wind_interpolator.close()

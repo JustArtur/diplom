@@ -149,6 +149,8 @@ class EnvironmentConfig:
     trajectory_steps_dir: Path | None = None
     # Сколько завершённых эпизодов хранить на диске для одной среды (старые удаляются).
     trajectory_max_history: int = 3
+    # Показывать конусы ветра на HTML-графике траекторий.
+    trajectory_show_wind_cones: bool = False
     # Имя reward-функции из diplom.envs.rewards (флаг CLI --reward).
     reward_name: str = "default"
     # Имя obs-модели из diplom.envs.observations (флаг CLI --obs).

@@ -48,12 +48,14 @@ class TrajectoryVisualizationCallback(BaseCallback):
         output_dir: Path,
         *,
         wind_dataset_path: Path | None = None,
+        show_wind_cones: bool = False,
         open_in_browser: bool = False,
         verbose: int = 0,
     ) -> None:
         super().__init__(verbose=verbose)
         self._output_dir = Path(output_dir)
         self._wind_dataset_path = Path(wind_dataset_path) if wind_dataset_path is not None else None
+        self._show_wind_cones = show_wind_cones
         self._open_in_browser = open_in_browser
 
         self._ctx = get_context("spawn")
@@ -155,6 +157,7 @@ class TrajectoryVisualizationCallback(BaseCallback):
             current_step_counts=current_step_counts,
             world_bounds=self._world_bounds,
             wind_dataset_path=self._wind_dataset_path,
+            show_wind_cones=self._show_wind_cones,
         )
 
 

@@ -86,10 +86,11 @@ def build_rollout_figure(
     *,
     title: str,
     wind_interpolator: WindInterpolator,
+    show_wind_cones: bool = False,
 ) -> go.Figure:
     bounds = compute_trajectory_bounds(episodes, world_bounds=wind_interpolator.world_bounds)
     wind_traces: list = []
-    if episodes and episodes[0].steps:
+    if show_wind_cones and episodes and episodes[0].steps:
         sim_time = np.datetime64(episodes[0].steps[-1]["sim_time"])
         wind_traces = build_wind_overlay_traces(wind_interpolator, sim_time)
     return build_figure(
@@ -106,11 +107,13 @@ def save_rollout_figure(
     title: str,
     wind_interpolator: WindInterpolator,
     output_path: Path,
+    show_wind_cones: bool = False,
 ) -> None:
     fig = build_rollout_figure(
         episodes,
         title=title,
         wind_interpolator=wind_interpolator,
+        show_wind_cones=show_wind_cones,
     )
     save_figure(fig, output_path)
 
