@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 try:
-    from numba import njit
+    from numba import njit, prange
 
     _HAS_NUMBA = True
 except ImportError:
@@ -15,7 +15,7 @@ except ImportError:
 
 
 def _axis_index_weight(axis: np.ndarray, value: float) -> tuple[int, int, float]:
-    """Индексы по оси и вес для линейной интерполяции (как scipy linear внутри домена)."""
+    """Индексы по оси и вес для линейной интерполяции внутри домена."""
     n = axis.shape[0]
     if n < 2:
         return 0, 0, 0.0
@@ -61,6 +61,57 @@ def sample_trilinear(
     return _sample_trilinear_numpy(
         values, time_axis, pressure_axis, lat_axis, lon_axis, t, p, lat, lon
     )
+
+
+def sample_trilinear_batch(
+    values: np.ndarray,
+    time_axis: np.ndarray,
+    pressure_axis: np.ndarray,
+    lat_axis: np.ndarray,
+    lon_axis: np.ndarray,
+    t_arr: np.ndarray,
+    p_arr: np.ndarray,
+    lat_arr: np.ndarray,
+    lon_arr: np.ndarray,
+) -> np.ndarray:
+    """Сэмпл 4 каналов для батча точек. Shape: (n, 4)."""
+    t_arr = np.asarray(t_arr, dtype=np.float64).reshape(-1)
+    p_arr = np.asarray(p_arr, dtype=np.float64).reshape(-1)
+    lat_arr = np.asarray(lat_arr, dtype=np.float64).reshape(-1)
+    lon_arr = np.asarray(lon_arr, dtype=np.float64).reshape(-1)
+    n = t_arr.shape[0]
+    if p_arr.shape[0] == 1 and n > 1:
+        p_arr = np.full(n, p_arr[0], dtype=np.float64)
+    if lat_arr.shape[0] != n or lon_arr.shape[0] != n or p_arr.shape[0] != n:
+        raise ValueError("t, p, lat, lon must have the same length")
+    out = np.empty((n, 4), dtype=np.float64)
+    if _HAS_NUMBA and values.dtype == np.float32:
+        _sample_trilinear_batch_numba(
+            values,
+            time_axis,
+            pressure_axis,
+            lat_axis,
+            lon_axis,
+            t_arr,
+            p_arr,
+            lat_arr,
+            lon_arr,
+            out,
+        )
+        return out
+    for i in range(n):
+        out[i] = _sample_trilinear_numpy(
+            values,
+            time_axis,
+            pressure_axis,
+            lat_axis,
+            lon_axis,
+            float(t_arr[i]),
+            float(p_arr[i]),
+            float(lat_arr[i]),
+            float(lon_arr[i]),
+        )
+    return out
 
 
 def _sample_trilinear_numpy(
@@ -136,6 +187,34 @@ if _HAS_NUMBA:
                             acc += weight * values[t_idx, p_idx, la_idx, lo_idx, c]
             out[c] = acc
 
+    @njit(parallel=True, cache=True)
+    def _sample_trilinear_batch_numba(
+        values,
+        time_axis,
+        pressure_axis,
+        lat_axis,
+        lon_axis,
+        t_arr,
+        p_arr,
+        lat_arr,
+        lon_arr,
+        out,
+    ):
+        n = t_arr.shape[0]
+        for i in prange(n):
+            _sample_trilinear_numba(
+                values,
+                time_axis,
+                pressure_axis,
+                lat_axis,
+                lon_axis,
+                t_arr[i],
+                p_arr[i],
+                lat_arr[i],
+                lon_arr[i],
+                out[i],
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class RegularGrid4DSampler:
@@ -161,6 +240,25 @@ class RegularGrid4DSampler:
 
     def sample(self, t: float, p: float, lat: float, lon: float) -> np.ndarray:
         return sample_trilinear(
+            self.values,
+            self.time_axis,
+            self.pressure_axis,
+            self.lat_axis,
+            self.lon_axis,
+            t,
+            p,
+            lat,
+            lon,
+        )
+
+    def sample_batch(
+        self,
+        t: np.ndarray,
+        p: np.ndarray,
+        lat: np.ndarray,
+        lon: np.ndarray,
+    ) -> np.ndarray:
+        return sample_trilinear_batch(
             self.values,
             self.time_axis,
             self.pressure_axis,

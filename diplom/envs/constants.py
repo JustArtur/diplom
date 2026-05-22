@@ -4,12 +4,12 @@ import numpy as np
 
 # Ограничение скорости накачки/откачки воздуха в баллон (кг/с).
 ACTION_LIMIT = 5.0
-DEFAULT_DT = 0.5
+DEFAULT_DT = 1
 # 2 500 000 шагов × dt=0.5 с ≈ 14.5 суток симуляции на эпизод (eval / верхняя граница).
 MAX_EPISODE_STEPS = 2_500_000
 # Лимит шагов эпизода при обучении PPO.
 TRAIN_MAX_EPISODE_STEPS = 2_500_000
-# Куррикулум длины эпизода (не менять без явного запроса).
+# Куррикулум длины эпизода: 300k → … → 2.5M; длительность этапа растёт на interval_growth.
 TRAIN_EPISODE_LENGTH_CURRICULUM_MIN = 300_000
 TRAIN_EPISODE_LENGTH_CURRICULUM_MAX = 1_250_000
 TRAIN_EPISODE_LENGTH_CURRICULUM_STEP = 200_000
@@ -34,8 +34,11 @@ REWARD_DISTANCE_NEAR_QUAD_COEF = 0.5
 REWARD_WIND_ALIGN_SCALE = 20.0
 REWARD_WIND_ALIGN_COEF = 0.5
 REWARD_WIND_ALIGN_DELTA_COEF = 0.25
+# Множитель wind_align при horizontal_progress < 0 на текущем шаге.
 REWARD_WIND_ALIGN_ADVERSE_PROGRESS_SCALE = 0.25
+# Обнулить wind_align после стольких шагов подряд с horizontal_progress < 0.
 REWARD_WIND_ALIGN_ZERO_PROGRESS_STEPS = 5
+# Серия шагов с попутным ветром (wind_toward > 0) / застревание (wind_toward < −5 м/с).
 REWARD_WIND_FAVORABLE_THRESHOLD = 0.0
 REWARD_WIND_ADVERSE_THRESHOLD = -5.0
 REWARD_WIND_FAVORABLE_STREAK_STEPS = 80
@@ -46,14 +49,13 @@ REWARD_HORIZONTAL_PROGRESS_POS_COEF = 3.0
 REWARD_HORIZONTAL_PROGRESS_NEG_COEF = 0.4
 REWARD_VERTICAL_PROGRESS_POS_COEF = 0.25
 REWARD_VERTICAL_PROGRESS_NEG_COEF = 0.05
+# Затухающий бонус: BASE * (dist_before / max_dist), только если dist < max_dist.
 REWARD_BEST_DISTANCE_BONUS = 20.0
 REWARD_BEST_DISTANCE_MAX_DIST_M = 50_000.0
-# Штраф за откат от лучшего dist_xy (ограниченный, чтобы не ломать critic).
-REWARD_DISTANCE_REGRESSION_COEF = 0.03
+# Штраф за откат от лучшего dist_xy.
+REWARD_DISTANCE_REGRESSION_COEF = 0.5
 REWARD_DISTANCE_REGRESSION_SCALE_M = 1_000.0
-REWARD_DISTANCE_REGRESSION_MIN_M = 500.0
-REWARD_DISTANCE_REGRESSION_MAX_TERM = 1.0
-REWARD_DISTANCE_REGRESSION_REL_RATIO = 1.05
+# Бонус за удержание dist_xy < порога.
 REWARD_HOLD_CLOSE_RADIUS_M = 5_000.0
 REWARD_HOLD_CLOSE_BONUS = 0.05
 REWARD_ENERGY_COEF = 0.5
@@ -62,36 +64,24 @@ REWARD_BOUNDARY_PENALTY = 0.05
 # Штраф за полёт выше порога во встречном ветре.
 REWARD_HIGH_ALTITUDE_M = 5000.0
 REWARD_HIGH_ALTITUDE_ADVERSE_PENALTY = 0.05
-# Доп. штраф: высоко + отриц. progress (анти-потолок).
-REWARD_CEILING_ALTITUDE_M = 8_000.0
-REWARD_CEILING_ADVERSE_PROGRESS_PENALTY = 0.3
-REWARD_Z_MAX_CEILING_RATIO = 0.9
-REWARD_Z_MAX_CEILING_PENALTY = 0.15
+# Штраф за «холостое» действие: только после streak шагов с |action|≥порога и |dz|<min_dz.
 REWARD_IDLE_ACTION_THRESHOLD = 0.3
 REWARD_IDLE_ACTION_MIN_DZ_M = 0.1
 REWARD_IDLE_ACTION_STREAK_STEPS = 40
 REWARD_IDLE_ACTION_PENALTY = 0.02
-# Бонус за улучшение wind_toward после смены слоя (|Δz| ≥ порога).
-REWARD_WIND_SCAN_MIN_DZ_M = 10.0
+# Бонус за улучшение wind_toward после смены слоя (|Δz| ≥ порога), только dist < max_dist.
+REWARD_WIND_SCAN_MIN_DZ_M = 20.0
 REWARD_WIND_SCAN_DELTA_COEF = 2.0
-# Постоянный shaping: «в probe-слоях ветер лучше, чем сейчас».
-REWARD_WIND_PROBE_BEST_COEF = 0.08
-REWARD_WIND_PROBE_BEST_MIN_DELTA = 0.5
+REWARD_WIND_SCAN_MAX_DIST_M = 30_000.0
+# Штраф за встречный ветер близко к цели.
 REWARD_ADVERSE_WIND_CLOSE_RADIUS_M = 10_000.0
 REWARD_ADVERSE_WIND_CLOSE_PENALTY = 0.15
-# z_stick: не штрафовать, если за recent-окно была смена слоя.
+# Штраф за залипание по высоте: std(z) за окно < min_std.
 REWARD_Z_STICK_WINDOW_STEPS = 50_000
 REWARD_Z_STICK_MIN_STD_M = 200.0
 REWARD_Z_STICK_PENALTY = 0.03
-REWARD_Z_STICK_RECENT_WINDOW_STEPS = 1_000
-REWARD_Z_STICK_RECENT_DZ_MIN_M = 50.0
-# Штраф за «залипание у земли» далеко от цели; бонус за подъём к лучшему probe-слою.
-REWARD_LOW_ALTITUDE_M = 500.0
-REWARD_LOW_ALTITUDE_FAR_M = 10_000.0
-REWARD_LOW_ALTITUDE_STUCK_PENALTY = 0.05
-REWARD_CLIMB_TOWARD_WIND_COEF = 0.15
-REWARD_CLIMB_TOWARD_WIND_MIN_DZ_M = 5.0
 SUCCESS_REWARD = 500.0
+# Масштабы для нормализации наблюдений (фиксированные, совместимы с worker rollout).
 OBS_XY_SCALE = 75_000.0
 OBS_ALTITUDE_SCALE = 15_000.0
 OBS_WIND_SCALE = 50.0
@@ -103,12 +93,29 @@ OBS_AIR_DENSITY_SCALE = 2.0
 OBS_TEMPERATURE_SCALE = 300.0
 OBS_PRESSURE_SCALE = 100_000.0
 OBS_NAV_DISTANCE_SCALE = 50_000.0
-OBS_PROBE_ALTITUDES_M: tuple[float, ...] = (500.0, 1500.0, 3000.0, 10_000.0)
-# base(20) + probe(N) + nav(2) + probe_gradients(N-1)
-OBS_DIM = 20 + len(OBS_PROBE_ALTITUDES_M) + 2 + max(0, len(OBS_PROBE_ALTITUDES_M) - 1)
+# Нормализация счётчика шагов подряд с wind_toward < 0.
+OBS_ADVERSE_WIND_STEPS_SCALE = 1_000.0
+# Смещения (м) от текущей Z для wind_toward — плотнее у текущего слоя.
+OBS_PROBE_ALTITUDE_OFFSETS_M: tuple[float, ...] = (
+    -400.0,
+    -200.0,
+    -100.0,
+    100.0,
+    200.0,
+    400.0,
+    1_000.0,
+    2_500.0,
+)
+# Полуширина окна для temporal-градиента wind_toward (probe+z − probe−z).
+OBS_PROBE_LAYER_GRADIENT_DELTA_M = 200.0
+# base(20) + probe winds(N) + nav(2) + temporal(3)
+OBS_DIM = 20 + len(OBS_PROBE_ALTITUDE_OFFSETS_M) + 2 + 3
+# Финальный радиус успеха по XY; на раннем этапе — TARGET_REACH_RADIUS_INITIAL (куррикулум).
 TARGET_REACH_RADIUS = 25.0
 TARGET_REACH_RADIUS_INITIAL = 100.0
 TARGET_REACH_RADIUS_FINAL = 25.0
+# Допустимое |ΔZ| до цели при успехе (decouple XY / Z).
 TARGET_VERTICAL_REACH_RADIUS = 3000.0
+# Рандомизация старта только по X/Y; Z — всегда base_balloon.initial_position[2].
 TRAIN_INITIAL_POSITION_DELTA = np.array([8_000.0, 8_000.0, 0.0], dtype=np.float32)
 TRAIN_TARGET_POSITION_DELTA = np.array([8_000.0, 8_000.0, 1_500.0], dtype=np.float32)

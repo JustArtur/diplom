@@ -11,14 +11,12 @@ import json
 import os
 import shutil
 import uuid
-import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Tuple
 
 import numpy as np
 import xarray as xr
-from scipy.interpolate import RegularGridInterpolator
 
 from diplom.geo import altitude_to_pressure_hpa, altitude_to_pressure_hpa_scalar, meters_per_deg_lat, meters_per_deg_lon
 from diplom.data.era5_paths import wind_cache_meta_path, wind_cache_value_path
@@ -291,8 +289,6 @@ class WindInterpolator:
     longitude_axis_deg: np.ndarray
     world_bounds: WorldBounds = field(init=False, repr=False)
 
-    # scipy — для совместимости; hot path использует _grid_sampler
-    _interp: RegularGridInterpolator = field(init=False, repr=False)
     _grid_sampler: RegularGrid4DSampler = field(init=False, repr=False)
     _time_axis_float: np.ndarray = field(init=False, repr=False)
     _m_per_lat: float = field(init=False, repr=False)
@@ -301,7 +297,6 @@ class WindInterpolator:
     _time_max_float: float = field(init=False, repr=False)
     _p_clip_min: float = field(init=False, repr=False)
     _p_clip_max: float = field(init=False, repr=False)
-    _pt_buf: np.ndarray = field(init=False, repr=False)
     _lat_min: float = field(init=False, repr=False)
     _lat_max: float = field(init=False, repr=False)
     _lon_min: float = field(init=False, repr=False)
@@ -320,10 +315,10 @@ class WindInterpolator:
         self.longitude_axis_deg = np.asarray(self.longitude_axis_deg, dtype=np.float64)
         self._time_axis_float = self.time_axis_ns.astype(np.float64)
         self._warned_dataset_bounds = False
-        self._build_scipy_interpolators()
+        self._init_grid_sampler()
 
-    def _build_scipy_interpolators(self) -> None:
-        """Собрать один vector-valued `RegularGridInterpolator` поверх общего кэша."""
+    def _init_grid_sampler(self) -> None:
+        """Собрать trilinear-сэмплер поверх memmap-кэша."""
         self._lat_min = float(self.latitude_axis_deg[0])
         self._lat_max = float(self.latitude_axis_deg[-1])
         self._lon_min = float(self.longitude_axis_deg[0])
@@ -340,29 +335,12 @@ class WindInterpolator:
         self._time_min = np.datetime64(int(self.time_axis_ns[0]), "ns")
         self._time_max = np.datetime64(int(self.time_axis_ns[-1]), "ns")
 
-        axes = (
+        self._grid_sampler = RegularGrid4DSampler.from_channel_first(
+            self.data,
             self._time_axis_float,
             self.pressure_axis_hpa,
             self.latitude_axis_deg,
             self.longitude_axis_deg,
-        )
-
-        # (4, T, P, Lat, Lon) → (T, P, Lat, Lon, 4): view без копии memmap.
-        values = np.moveaxis(self.data, 0, -1)
-        fill_value = np.array([0.0, 0.0, 0.0, 288.15], dtype=np.float64)
-        self._interp = RegularGridInterpolator(
-            axes,
-            values,
-            method="linear",
-            bounds_error=False,
-            fill_value=fill_value,
-        )
-        self._grid_sampler = RegularGrid4DSampler(
-            values=values,
-            time_axis=self._time_axis_float,
-            pressure_axis=self.pressure_axis_hpa,
-            lat_axis=self.latitude_axis_deg,
-            lon_axis=self.longitude_axis_deg,
         )
 
         self._m_per_lat = meters_per_deg_lat(self.origin_lat)
@@ -371,7 +349,6 @@ class WindInterpolator:
         self._time_max_float = float(self._time_max.astype("datetime64[ns]").astype(np.float64))
         self._p_clip_min = min(self._p_min, self._p_max)
         self._p_clip_max = max(self._p_min, self._p_max)
-        self._pt_buf = np.empty((1, 4), dtype=np.float64)
 
     @property
     def time_min(self) -> np.datetime64:
@@ -532,9 +509,9 @@ class WindInterpolator:
         level = self._z_to_pressure(z)
         t = self._time_to_float(time)
 
-        pt = np.column_stack([t, level, lat, lon])
-        u, v, w_omega, _temp = np.moveaxis(self._interp(pt).astype(np.float32), -1, 0)
-        w = omega_to_w_mps(w_omega, level, _temp).astype(np.float32)
+        sampled = self._grid_sampler.sample_batch(t, level, lat, lon)
+        u, v, w_omega, temp = sampled.T.astype(np.float32)
+        w = omega_to_w_mps(w_omega, level, temp).astype(np.float32)
         return np.stack([u, v, w], axis=-1)
 
     def close(self) -> None:

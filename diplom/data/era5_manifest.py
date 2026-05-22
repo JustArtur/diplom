@@ -224,7 +224,7 @@ def build_train_parallel_argv(
     jobs_override: int | None = None,
 ) -> list[str]:
     """Собрать argv для run_train_parallel_ppo из манифеста."""
-    from diplom.train.parallel_ppo import RUNNER_TOKEN
+    from diplom.dev.parallel_ppo import RUNNER_TOKEN
 
     argv: list[str] = []
     jobs = jobs_override if jobs_override is not None else manifest.train_defaults.parallel_jobs

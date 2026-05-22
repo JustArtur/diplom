@@ -9,76 +9,7 @@ from diplom.envs.constants import (
     ACTION_LIMIT,
     DEFAULT_DT,
     MAX_EPISODE_STEPS,
-    REWARD_ADVERSE_WIND_CLOSE_PENALTY,
-    REWARD_ADVERSE_WIND_CLOSE_RADIUS_M,
-    REWARD_BEST_DISTANCE_BONUS,
-    REWARD_BEST_DISTANCE_MAX_DIST_M,
-    REWARD_BOUNDARY_PENALTY,
-    REWARD_CEILING_ADVERSE_PROGRESS_PENALTY,
-    REWARD_CEILING_ALTITUDE_M,
-    REWARD_CLIMB_TOWARD_WIND_COEF,
-    REWARD_CLIMB_TOWARD_WIND_MIN_DZ_M,
-    REWARD_DISTANCE_NEAR_QUAD_COEF,
-    REWARD_DISTANCE_NEAR_RADIUS_M,
-    REWARD_DISTANCE_REGRESSION_COEF,
-    REWARD_DISTANCE_REGRESSION_MAX_TERM,
-    REWARD_DISTANCE_REGRESSION_MIN_M,
-    REWARD_DISTANCE_REGRESSION_REL_RATIO,
-    REWARD_HOLD_CLOSE_BONUS,
-    REWARD_HOLD_CLOSE_RADIUS_M,
-    REWARD_DISTANCE_REGRESSION_SCALE_M,
-    REWARD_LOW_ALTITUDE_FAR_M,
-    REWARD_LOW_ALTITUDE_M,
-    REWARD_LOW_ALTITUDE_STUCK_PENALTY,
-    REWARD_PROGRESS_ZONE_FAR_M,
-    REWARD_PROGRESS_ZONE_FINISH_MULT,
-    REWARD_PROGRESS_ZONE_MID_M,
-    REWARD_PROGRESS_ZONE_MID_MULT,
-    REWARD_PROGRESS_ZONE_NEAR_M,
-    REWARD_PROGRESS_ZONE_NEAR_MULT,
-    REWARD_ENERGY_COEF,
-    REWARD_ENERGY_SCALE,
-    REWARD_HIGH_ALTITUDE_ADVERSE_PENALTY,
-    REWARD_HIGH_ALTITUDE_M,
-    REWARD_HORIZONTAL_DISTANCE_COEF,
-    REWARD_HORIZONTAL_DISTANCE_SCALE,
-    REWARD_HORIZONTAL_PROGRESS_NEG_COEF,
-    REWARD_HORIZONTAL_PROGRESS_POS_COEF,
-    REWARD_HORIZONTAL_PROGRESS_SCALE,
-    REWARD_IDLE_ACTION_MIN_DZ_M,
-    REWARD_IDLE_ACTION_PENALTY,
-    REWARD_IDLE_ACTION_STREAK_STEPS,
-    REWARD_IDLE_ACTION_THRESHOLD,
-    REWARD_VERTICAL_PROGRESS_NEG_COEF,
-    REWARD_VERTICAL_PROGRESS_POS_COEF,
-    REWARD_VERTICAL_PROGRESS_SCALE,
-    REWARD_WIND_ALIGN_ADVERSE_PROGRESS_SCALE,
-    REWARD_WIND_ALIGN_COEF,
-    REWARD_WIND_ALIGN_DELTA_COEF,
-    REWARD_WIND_ALIGN_SCALE,
-    REWARD_WIND_ALIGN_ZERO_PROGRESS_STEPS,
-    REWARD_WIND_ADVERSE_STREAK_PENALTY,
-    REWARD_WIND_ADVERSE_STREAK_STEPS,
-    REWARD_WIND_ADVERSE_THRESHOLD,
-    REWARD_WIND_FAVORABLE_STREAK_BONUS,
-    REWARD_WIND_FAVORABLE_STREAK_STEPS,
-    REWARD_WIND_FAVORABLE_THRESHOLD,
-    REWARD_WIND_PROBE_BEST_COEF,
-    REWARD_WIND_PROBE_BEST_MIN_DELTA,
-    REWARD_WIND_SCAN_DELTA_COEF,
-    REWARD_WIND_SCAN_MIN_DZ_M,
-    REWARD_Z_MAX_CEILING_PENALTY,
-    REWARD_Z_MAX_CEILING_RATIO,
-    REWARD_Z_STICK_RECENT_DZ_MIN_M,
-    REWARD_Z_STICK_RECENT_WINDOW_STEPS,
-    REWARD_Z_STICK_MIN_STD_M,
-    REWARD_Z_STICK_PENALTY,
-    REWARD_Z_STICK_WINDOW_STEPS,
-    SUCCESS_REWARD,
     TARGET_REACH_RADIUS,
-    TARGET_REACH_RADIUS_FINAL,
-    TARGET_REACH_RADIUS_INITIAL,
-    TARGET_VERTICAL_REACH_RADIUS,
     TRAIN_INITIAL_POSITION_DELTA,
     TRAIN_EPISODE_LENGTH_CURRICULUM_INTERVAL,
     TRAIN_EPISODE_LENGTH_CURRICULUM_INTERVAL_GROWTH,
@@ -89,7 +20,6 @@ from diplom.envs.constants import (
     TRAIN_TARGET_POSITION_DELTA,
 )
 from diplom.sim.constants import DEFAULT_AIR_WEIGHT
-from diplom.viz.constants import WINDOW_SIZE
 from diplom.data.era5_paths import (
     DEFAULT_ERA5_EAST,
     DEFAULT_ERA5_END,
@@ -217,81 +147,10 @@ class EnvironmentConfig:
     action_limit: float = ACTION_LIMIT
     # Радиус вокруг цели, при попадании в который эпизод считается завершённым успешно.
     target_reach_radius: float = TARGET_REACH_RADIUS
-    # Допустимое |ΔZ| до цели при успехе (XY и Z проверяются отдельно).
-    target_vertical_reach_radius: float = TARGET_VERTICAL_REACH_RADIUS
     # Максимальное число шагов в одном эпизоде (eval/rollout; в train подменяется train_max_episode_steps).
     max_episode_steps: int = MAX_EPISODE_STEPS
     # Лимит шагов эпизода при обучении PPO.
     train_max_episode_steps: int = TRAIN_MAX_EPISODE_STEPS
-    # wind_toward / scale; Δalignment; асимметричный progress_xy; слабый −distance_xy.
-    reward_wind_align_scale: float = REWARD_WIND_ALIGN_SCALE
-    reward_wind_align_coef: float = REWARD_WIND_ALIGN_COEF
-    reward_wind_align_delta_coef: float = REWARD_WIND_ALIGN_DELTA_COEF
-    reward_wind_favorable_threshold: float = REWARD_WIND_FAVORABLE_THRESHOLD
-    reward_wind_adverse_threshold: float = REWARD_WIND_ADVERSE_THRESHOLD
-    reward_wind_favorable_streak_steps: int = REWARD_WIND_FAVORABLE_STREAK_STEPS
-    reward_wind_adverse_streak_steps: int = REWARD_WIND_ADVERSE_STREAK_STEPS
-    reward_wind_favorable_streak_bonus: float = REWARD_WIND_FAVORABLE_STREAK_BONUS
-    reward_wind_adverse_streak_penalty: float = REWARD_WIND_ADVERSE_STREAK_PENALTY
-    reward_wind_align_adverse_progress_scale: float = REWARD_WIND_ALIGN_ADVERSE_PROGRESS_SCALE
-    reward_wind_align_zero_progress_steps: int = REWARD_WIND_ALIGN_ZERO_PROGRESS_STEPS
-    reward_high_altitude_m: float = REWARD_HIGH_ALTITUDE_M
-    reward_high_altitude_adverse_penalty: float = REWARD_HIGH_ALTITUDE_ADVERSE_PENALTY
-    reward_idle_action_threshold: float = REWARD_IDLE_ACTION_THRESHOLD
-    reward_idle_action_min_dz_m: float = REWARD_IDLE_ACTION_MIN_DZ_M
-    reward_idle_action_streak_steps: int = REWARD_IDLE_ACTION_STREAK_STEPS
-    reward_idle_action_penalty: float = REWARD_IDLE_ACTION_PENALTY
-    reward_wind_scan_min_dz_m: float = REWARD_WIND_SCAN_MIN_DZ_M
-    reward_wind_scan_delta_coef: float = REWARD_WIND_SCAN_DELTA_COEF
-    reward_wind_probe_best_coef: float = REWARD_WIND_PROBE_BEST_COEF
-    reward_wind_probe_best_min_delta: float = REWARD_WIND_PROBE_BEST_MIN_DELTA
-    reward_ceiling_altitude_m: float = REWARD_CEILING_ALTITUDE_M
-    reward_ceiling_adverse_progress_penalty: float = REWARD_CEILING_ADVERSE_PROGRESS_PENALTY
-    reward_z_max_ceiling_ratio: float = REWARD_Z_MAX_CEILING_RATIO
-    reward_z_max_ceiling_penalty: float = REWARD_Z_MAX_CEILING_PENALTY
-    reward_z_stick_recent_window_steps: int = REWARD_Z_STICK_RECENT_WINDOW_STEPS
-    reward_z_stick_recent_dz_min_m: float = REWARD_Z_STICK_RECENT_DZ_MIN_M
-    reward_low_altitude_m: float = REWARD_LOW_ALTITUDE_M
-    reward_low_altitude_far_m: float = REWARD_LOW_ALTITUDE_FAR_M
-    reward_low_altitude_stuck_penalty: float = REWARD_LOW_ALTITUDE_STUCK_PENALTY
-    reward_climb_toward_wind_coef: float = REWARD_CLIMB_TOWARD_WIND_COEF
-    reward_climb_toward_wind_min_dz_m: float = REWARD_CLIMB_TOWARD_WIND_MIN_DZ_M
-    reward_adverse_wind_close_radius_m: float = REWARD_ADVERSE_WIND_CLOSE_RADIUS_M
-    reward_adverse_wind_close_penalty: float = REWARD_ADVERSE_WIND_CLOSE_PENALTY
-    reward_progress_zone_far_m: float = REWARD_PROGRESS_ZONE_FAR_M
-    reward_progress_zone_mid_m: float = REWARD_PROGRESS_ZONE_MID_M
-    reward_progress_zone_near_m: float = REWARD_PROGRESS_ZONE_NEAR_M
-    reward_progress_zone_mid_mult: float = REWARD_PROGRESS_ZONE_MID_MULT
-    reward_progress_zone_near_mult: float = REWARD_PROGRESS_ZONE_NEAR_MULT
-    reward_progress_zone_finish_mult: float = REWARD_PROGRESS_ZONE_FINISH_MULT
-    reward_best_distance_max_dist_m: float = REWARD_BEST_DISTANCE_MAX_DIST_M
-    reward_distance_regression_coef: float = REWARD_DISTANCE_REGRESSION_COEF
-    reward_distance_regression_scale_m: float = REWARD_DISTANCE_REGRESSION_SCALE_M
-    reward_distance_regression_min_m: float = REWARD_DISTANCE_REGRESSION_MIN_M
-    reward_distance_regression_max_term: float = REWARD_DISTANCE_REGRESSION_MAX_TERM
-    reward_distance_regression_rel_ratio: float = REWARD_DISTANCE_REGRESSION_REL_RATIO
-    reward_hold_close_radius_m: float = REWARD_HOLD_CLOSE_RADIUS_M
-    reward_hold_close_bonus: float = REWARD_HOLD_CLOSE_BONUS
-    reward_distance_near_radius_m: float = REWARD_DISTANCE_NEAR_RADIUS_M
-    reward_distance_near_quad_coef: float = REWARD_DISTANCE_NEAR_QUAD_COEF
-    target_reach_radius_initial: float = TARGET_REACH_RADIUS_INITIAL
-    target_reach_radius_final: float = TARGET_REACH_RADIUS_FINAL
-    reward_z_stick_window_steps: int = REWARD_Z_STICK_WINDOW_STEPS
-    reward_z_stick_min_std_m: float = REWARD_Z_STICK_MIN_STD_M
-    reward_z_stick_penalty: float = REWARD_Z_STICK_PENALTY
-    reward_horizontal_progress_scale: float = REWARD_HORIZONTAL_PROGRESS_SCALE
-    reward_horizontal_progress_pos_coef: float = REWARD_HORIZONTAL_PROGRESS_POS_COEF
-    reward_horizontal_progress_neg_coef: float = REWARD_HORIZONTAL_PROGRESS_NEG_COEF
-    reward_vertical_progress_scale: float = REWARD_VERTICAL_PROGRESS_SCALE
-    reward_vertical_progress_pos_coef: float = REWARD_VERTICAL_PROGRESS_POS_COEF
-    reward_vertical_progress_neg_coef: float = REWARD_VERTICAL_PROGRESS_NEG_COEF
-    reward_horizontal_distance_scale: float = REWARD_HORIZONTAL_DISTANCE_SCALE
-    reward_horizontal_distance_coef: float = REWARD_HORIZONTAL_DISTANCE_COEF
-    reward_best_distance_bonus: float = REWARD_BEST_DISTANCE_BONUS
-    reward_energy_coef: float = REWARD_ENERGY_COEF
-    reward_energy_scale: float = REWARD_ENERGY_SCALE
-    reward_boundary_penalty: float = REWARD_BOUNDARY_PENALTY
-    success_reward: float = SUCCESS_REWARD
     # Делить компоненты obs на фиксированные масштабы (совместимо с worker rollout).
     normalize_observations: bool = True
     # Каталог JSONL-шагов для HTML-траекторий; None — не писать шаги на диск.
@@ -325,20 +184,18 @@ class TrainingConfig:
     device: str = "cpu"
     # Уровень логирования PPO в консоль (как verbose в Stable-Baselines3): 0 — тихо, 1 — таблица метрик.
     verbose: int = 1
-    # Гибрид: policy+env в subprocess, rollout через shared memory (n_envs > 1).
-    use_worker_policy_rollout: bool = True
     # n_steps PPO на среду за rollout (должен совпадать с n_steps в PPO(...)).
     ppo_n_steps: int = 4096
     # Энтропийный коэффициент PPO (меньше — меньше раздувается log_std).
     ent_coef: float = 0.008
-    ent_coef_start: float = 0.03
+    ent_coef_start: float = 0.02
     ent_coef_end: float = 0.008
     ent_coef_decay_timesteps: int = 5_000_000
     # Learning rate PPO.
     learning_rate: float = 1e-4
     # Ограничение нормы градиента (стабильность при всплесках KL).
     max_grad_norm: float = 0.3
-    # По мере timesteps расширять окно рандомизации старта/цели (см. curriculum_callback).
+    # По мере timesteps расширять окно рандомизации старта/цели (см. curriculum_callbacks).
     curriculum_enabled: bool = True
     # По мере timesteps увеличивать max_episode_steps (300k +300k до 2.5M).
     episode_length_curriculum_enabled: bool = True
@@ -351,10 +208,13 @@ class TrainingConfig:
     episode_length_freeze_until_success: bool = False
 
 
+DEFAULT_WINDOW_SIZE: tuple[int, int] = (2560, 1440)
+
+
 @dataclass(frozen=True, slots=True)
 class VisualizationConfig:
     # Размер окна визуализации.
-    window_size: tuple[int, int] = WINDOW_SIZE
+    window_size: tuple[int, int] = DEFAULT_WINDOW_SIZE
     # Нижний цвет фона сцены.
     bg_bottom: str = "deepskyblue"
     # Верхний цвет фона сцены.
