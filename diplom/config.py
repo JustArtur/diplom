@@ -182,10 +182,10 @@ EpisodeLengthCurriculumStageInput: TypeAlias = (
 
 
 DEFAULT_EPISODE_LENGTH_CURRICULUM_STAGES: tuple[EpisodeLengthCurriculumStage, ...] = (
-    EpisodeLengthCurriculumStage(0, 5_000_000, 300_000),
-    EpisodeLengthCurriculumStage(5_000_000, 15_000_000, 600_000),
-    EpisodeLengthCurriculumStage(15_000_000, 25_000_000, 900_000),
-    EpisodeLengthCurriculumStage(25_000_000, None, 1_250_000),
+    EpisodeLengthCurriculumStage(0, 7_000_000, 300_000),
+    EpisodeLengthCurriculumStage(7_000_000, 17_000_000, 600_000),
+    EpisodeLengthCurriculumStage(17_000_000, 30_000_000, 900_000),
+    EpisodeLengthCurriculumStage(30_000_000, None, 1_250_000),
 )
 
 
