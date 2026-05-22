@@ -27,6 +27,7 @@ from diplom.data.era5_paths import (
     DEFAULT_ERA5_OUTFILE,
     ERA5_PREVIEW_DATA_DIR,
     ERA5_TRAINING_DATA_DIR,
+    ERA5_TRAINING_MANIFEST_PATH,
     era5_outfile_for_bounds,
     era5_dataset_title,
     list_era5_datasets,
@@ -188,9 +189,67 @@ def download(
         "--preview",
         help="Сохранить в data/preview/ для просмотра ветра (по умолчанию — data/training/).",
     ),
+    download_all: bool = typer.Option(
+        False,
+        "--all",
+        "-a",
+        help="Скачать все датасеты из data/training/datasets_manifest.toml "
+        "(пропускать уже существующие; --force — перекачать).",
+    ),
+    manifest: Path | None = typer.Option(
+        None,
+        "--manifest",
+        help="Путь к TOML-манифесту (по умолчанию data/training/datasets_manifest.toml).",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Перекачать, даже если NetCDF уже есть (удаляет файл и чанки).",
+    ),
 ) -> None:
-    """Скачать подмножество ERA5 в NetCDF."""
+    """Скачать подмножество ERA5 в NetCDF.
+
+    Один регион — укажите --north/--south/--west/--east и --start/--end.
+
+    Все обязательные training-датасеты:
+
+    \b
+      diplom download --all --hour-step 8 -j 15
+      diplom download --all --force --hour-step 8 -j 15
+    """
     from diplom.data.era5_download import download_era5_pressure
+    from diplom.data.era5_manifest import download_training_manifest, load_training_manifest
+
+    if download_all:
+        if preview:
+            typer.echo("[ошибка] --all несовместим с --preview (манифест только для data/training/)", err=True)
+            raise typer.Exit(code=1)
+        if outfile is not None:
+            typer.echo("[ошибка] --all несовместим с --outfile", err=True)
+            raise typer.Exit(code=1)
+
+        manifest_path = manifest or ERA5_TRAINING_MANIFEST_PATH
+        try:
+            training_manifest = load_training_manifest(manifest_path)
+        except (FileNotFoundError, ValueError) as exc:
+            typer.echo(f"[ошибка] {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+        download_training_manifest(
+            training_manifest,
+            pressure_levels=tuple(level),
+            variables=tuple(variable),
+            hour_step=hour_step,
+            workers=workers,
+            keep_chunks=keep_chunks,
+            chunks_dir=chunks_dir,
+            force=force,
+        )
+        return
+
+    if manifest is not None:
+        typer.echo("[ошибка] --manifest используйте вместе с --all", err=True)
+        raise typer.Exit(code=1)
 
     data_dir = ERA5_PREVIEW_DATA_DIR if preview else ERA5_TRAINING_DATA_DIR
     resolved_outfile = outfile or era5_outfile_for_bounds(
@@ -219,6 +278,7 @@ def download(
         chunks_dir=chunks_dir,
         keep_chunks=keep_chunks,
         workers=workers,
+        force=force,
     )
 
 # ──────────────────── viz_real ────────────────────
@@ -368,9 +428,16 @@ def train_ppo(
 def train_parallel_ppo(ctx: typer.Context) -> None:
     """Несколько train-ppo параллельно с одним процессом рендера траекторий.
 
-    Глобально: ``--jobs N`` (по умолчанию — число CPU). Далее блоки через ``runner``:
+    Из манифеста (``data/training/datasets_manifest.toml``):
 
-    ``diplom train-parallel-ppo --jobs 2 runner --dataset a runner --dataset b``
+    \b
+      diplom train-parallel-ppo --from-manifest
+      diplom train-parallel-ppo --from-manifest --jobs 2
+
+    Вручную — глобально ``--jobs N``, затем блоки ``runner``:
+
+    \b
+      diplom train-parallel-ppo --jobs 2 runner --dataset era5_... --envs=2
     """
     from diplom.train.parallel_ppo import run_train_parallel_ppo
 

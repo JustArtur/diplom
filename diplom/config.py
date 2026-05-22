@@ -9,8 +9,33 @@ from diplom.envs.constants import (
     ACTION_LIMIT,
     DEFAULT_DT,
     MAX_EPISODE_STEPS,
+    REWARD_ADVERSE_WIND_CLOSE_PENALTY,
+    REWARD_ADVERSE_WIND_CLOSE_RADIUS_M,
     REWARD_BEST_DISTANCE_BONUS,
+    REWARD_BEST_DISTANCE_MAX_DIST_M,
     REWARD_BOUNDARY_PENALTY,
+    REWARD_CEILING_ADVERSE_PROGRESS_PENALTY,
+    REWARD_CEILING_ALTITUDE_M,
+    REWARD_CLIMB_TOWARD_WIND_COEF,
+    REWARD_CLIMB_TOWARD_WIND_MIN_DZ_M,
+    REWARD_DISTANCE_NEAR_QUAD_COEF,
+    REWARD_DISTANCE_NEAR_RADIUS_M,
+    REWARD_DISTANCE_REGRESSION_COEF,
+    REWARD_DISTANCE_REGRESSION_MAX_TERM,
+    REWARD_DISTANCE_REGRESSION_MIN_M,
+    REWARD_DISTANCE_REGRESSION_REL_RATIO,
+    REWARD_HOLD_CLOSE_BONUS,
+    REWARD_HOLD_CLOSE_RADIUS_M,
+    REWARD_DISTANCE_REGRESSION_SCALE_M,
+    REWARD_LOW_ALTITUDE_FAR_M,
+    REWARD_LOW_ALTITUDE_M,
+    REWARD_LOW_ALTITUDE_STUCK_PENALTY,
+    REWARD_PROGRESS_ZONE_FAR_M,
+    REWARD_PROGRESS_ZONE_FINISH_MULT,
+    REWARD_PROGRESS_ZONE_MID_M,
+    REWARD_PROGRESS_ZONE_MID_MULT,
+    REWARD_PROGRESS_ZONE_NEAR_M,
+    REWARD_PROGRESS_ZONE_NEAR_MULT,
     REWARD_ENERGY_COEF,
     REWARD_ENERGY_SCALE,
     REWARD_HIGH_ALTITUDE_ADVERSE_PENALTY,
@@ -38,13 +63,21 @@ from diplom.envs.constants import (
     REWARD_WIND_FAVORABLE_STREAK_BONUS,
     REWARD_WIND_FAVORABLE_STREAK_STEPS,
     REWARD_WIND_FAVORABLE_THRESHOLD,
+    REWARD_WIND_PROBE_BEST_COEF,
+    REWARD_WIND_PROBE_BEST_MIN_DELTA,
     REWARD_WIND_SCAN_DELTA_COEF,
     REWARD_WIND_SCAN_MIN_DZ_M,
+    REWARD_Z_MAX_CEILING_PENALTY,
+    REWARD_Z_MAX_CEILING_RATIO,
+    REWARD_Z_STICK_RECENT_DZ_MIN_M,
+    REWARD_Z_STICK_RECENT_WINDOW_STEPS,
     REWARD_Z_STICK_MIN_STD_M,
     REWARD_Z_STICK_PENALTY,
     REWARD_Z_STICK_WINDOW_STEPS,
     SUCCESS_REWARD,
     TARGET_REACH_RADIUS,
+    TARGET_REACH_RADIUS_FINAL,
+    TARGET_REACH_RADIUS_INITIAL,
     TARGET_VERTICAL_REACH_RADIUS,
     TRAIN_INITIAL_POSITION_DELTA,
     TRAIN_EPISODE_LENGTH_CURRICULUM_INTERVAL,
@@ -210,6 +243,39 @@ class EnvironmentConfig:
     reward_idle_action_penalty: float = REWARD_IDLE_ACTION_PENALTY
     reward_wind_scan_min_dz_m: float = REWARD_WIND_SCAN_MIN_DZ_M
     reward_wind_scan_delta_coef: float = REWARD_WIND_SCAN_DELTA_COEF
+    reward_wind_probe_best_coef: float = REWARD_WIND_PROBE_BEST_COEF
+    reward_wind_probe_best_min_delta: float = REWARD_WIND_PROBE_BEST_MIN_DELTA
+    reward_ceiling_altitude_m: float = REWARD_CEILING_ALTITUDE_M
+    reward_ceiling_adverse_progress_penalty: float = REWARD_CEILING_ADVERSE_PROGRESS_PENALTY
+    reward_z_max_ceiling_ratio: float = REWARD_Z_MAX_CEILING_RATIO
+    reward_z_max_ceiling_penalty: float = REWARD_Z_MAX_CEILING_PENALTY
+    reward_z_stick_recent_window_steps: int = REWARD_Z_STICK_RECENT_WINDOW_STEPS
+    reward_z_stick_recent_dz_min_m: float = REWARD_Z_STICK_RECENT_DZ_MIN_M
+    reward_low_altitude_m: float = REWARD_LOW_ALTITUDE_M
+    reward_low_altitude_far_m: float = REWARD_LOW_ALTITUDE_FAR_M
+    reward_low_altitude_stuck_penalty: float = REWARD_LOW_ALTITUDE_STUCK_PENALTY
+    reward_climb_toward_wind_coef: float = REWARD_CLIMB_TOWARD_WIND_COEF
+    reward_climb_toward_wind_min_dz_m: float = REWARD_CLIMB_TOWARD_WIND_MIN_DZ_M
+    reward_adverse_wind_close_radius_m: float = REWARD_ADVERSE_WIND_CLOSE_RADIUS_M
+    reward_adverse_wind_close_penalty: float = REWARD_ADVERSE_WIND_CLOSE_PENALTY
+    reward_progress_zone_far_m: float = REWARD_PROGRESS_ZONE_FAR_M
+    reward_progress_zone_mid_m: float = REWARD_PROGRESS_ZONE_MID_M
+    reward_progress_zone_near_m: float = REWARD_PROGRESS_ZONE_NEAR_M
+    reward_progress_zone_mid_mult: float = REWARD_PROGRESS_ZONE_MID_MULT
+    reward_progress_zone_near_mult: float = REWARD_PROGRESS_ZONE_NEAR_MULT
+    reward_progress_zone_finish_mult: float = REWARD_PROGRESS_ZONE_FINISH_MULT
+    reward_best_distance_max_dist_m: float = REWARD_BEST_DISTANCE_MAX_DIST_M
+    reward_distance_regression_coef: float = REWARD_DISTANCE_REGRESSION_COEF
+    reward_distance_regression_scale_m: float = REWARD_DISTANCE_REGRESSION_SCALE_M
+    reward_distance_regression_min_m: float = REWARD_DISTANCE_REGRESSION_MIN_M
+    reward_distance_regression_max_term: float = REWARD_DISTANCE_REGRESSION_MAX_TERM
+    reward_distance_regression_rel_ratio: float = REWARD_DISTANCE_REGRESSION_REL_RATIO
+    reward_hold_close_radius_m: float = REWARD_HOLD_CLOSE_RADIUS_M
+    reward_hold_close_bonus: float = REWARD_HOLD_CLOSE_BONUS
+    reward_distance_near_radius_m: float = REWARD_DISTANCE_NEAR_RADIUS_M
+    reward_distance_near_quad_coef: float = REWARD_DISTANCE_NEAR_QUAD_COEF
+    target_reach_radius_initial: float = TARGET_REACH_RADIUS_INITIAL
+    target_reach_radius_final: float = TARGET_REACH_RADIUS_FINAL
     reward_z_stick_window_steps: int = REWARD_Z_STICK_WINDOW_STEPS
     reward_z_stick_min_std_m: float = REWARD_Z_STICK_MIN_STD_M
     reward_z_stick_penalty: float = REWARD_Z_STICK_PENALTY
@@ -245,7 +311,7 @@ class SimulationConfig:
 @dataclass(frozen=True, slots=True)
 class TrainingConfig:
     # Общее число шагов обучения PPO.
-    total_timesteps: int = 4_000_000
+    total_timesteps: int = 20_000_000
     # Seed для воспроизводимости.
     seed: int = 0
     # Родительский каталог run-ов; фактический путь — {logdir}/{имя_датасета}/.
@@ -265,6 +331,9 @@ class TrainingConfig:
     ppo_n_steps: int = 4096
     # Энтропийный коэффициент PPO (меньше — меньше раздувается log_std).
     ent_coef: float = 0.008
+    ent_coef_start: float = 0.03
+    ent_coef_end: float = 0.008
+    ent_coef_decay_timesteps: int = 5_000_000
     # Learning rate PPO.
     learning_rate: float = 1e-4
     # Ограничение нормы градиента (стабильность при всплесках KL).

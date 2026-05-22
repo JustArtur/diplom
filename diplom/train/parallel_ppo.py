@@ -70,6 +70,9 @@ def _parse_jobs(global_args: list[str]) -> tuple[int, list[str]]:
 
 def run_train_parallel_ppo(argv: list[str]) -> int:
     """Запустить несколько train-ppo; один subprocess рендера траекторий на все run."""
+    from diplom.data.era5_manifest import expand_training_manifest_argv
+
+    argv = expand_training_manifest_argv(argv)
     global_args, runs = parse_train_parallel_argv(argv)
     jobs, _ = _parse_jobs(global_args)
 

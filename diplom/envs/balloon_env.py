@@ -15,6 +15,7 @@ from diplom.envs.constants import (
     OBS_ALTITUDE_SCALE,
     OBS_DIM,
     OBS_ENERGY_SCALE,
+    OBS_NAV_DISTANCE_SCALE,
     OBS_PRESSURE_SCALE,
     OBS_PROBE_ALTITUDES_M,
     OBS_TEMPERATURE_SCALE,
@@ -62,6 +63,22 @@ class BalloonEnv(gym.Env):
         self.reward_horizontal_distance_scale = float(config.reward_horizontal_distance_scale)
         self.reward_horizontal_distance_coef = float(config.reward_horizontal_distance_coef)
         self.reward_best_distance_bonus = float(config.reward_best_distance_bonus)
+        self.reward_best_distance_max_dist_m = float(config.reward_best_distance_max_dist_m)
+        self.reward_distance_regression_coef = float(config.reward_distance_regression_coef)
+        self.reward_distance_regression_scale_m = float(config.reward_distance_regression_scale_m)
+        self.reward_distance_regression_min_m = float(config.reward_distance_regression_min_m)
+        self.reward_distance_regression_max_term = float(config.reward_distance_regression_max_term)
+        self.reward_distance_regression_rel_ratio = float(config.reward_distance_regression_rel_ratio)
+        self.reward_hold_close_radius_m = float(config.reward_hold_close_radius_m)
+        self.reward_hold_close_bonus = float(config.reward_hold_close_bonus)
+        self.reward_distance_near_radius_m = float(config.reward_distance_near_radius_m)
+        self.reward_distance_near_quad_coef = float(config.reward_distance_near_quad_coef)
+        self.reward_progress_zone_far_m = float(config.reward_progress_zone_far_m)
+        self.reward_progress_zone_mid_m = float(config.reward_progress_zone_mid_m)
+        self.reward_progress_zone_near_m = float(config.reward_progress_zone_near_m)
+        self.reward_progress_zone_mid_mult = float(config.reward_progress_zone_mid_mult)
+        self.reward_progress_zone_near_mult = float(config.reward_progress_zone_near_mult)
+        self.reward_progress_zone_finish_mult = float(config.reward_progress_zone_finish_mult)
         self.reward_energy_coef = float(config.reward_energy_coef)
         self.reward_energy_scale = float(config.reward_energy_scale)
         self.reward_boundary_penalty = float(config.reward_boundary_penalty)
@@ -81,6 +98,21 @@ class BalloonEnv(gym.Env):
         self.reward_idle_action_penalty = float(config.reward_idle_action_penalty)
         self.reward_wind_scan_min_dz_m = float(config.reward_wind_scan_min_dz_m)
         self.reward_wind_scan_delta_coef = float(config.reward_wind_scan_delta_coef)
+        self.reward_wind_probe_best_coef = float(config.reward_wind_probe_best_coef)
+        self.reward_wind_probe_best_min_delta = float(config.reward_wind_probe_best_min_delta)
+        self.reward_ceiling_altitude_m = float(config.reward_ceiling_altitude_m)
+        self.reward_ceiling_adverse_progress_penalty = float(config.reward_ceiling_adverse_progress_penalty)
+        self.reward_z_max_ceiling_ratio = float(config.reward_z_max_ceiling_ratio)
+        self.reward_z_max_ceiling_penalty = float(config.reward_z_max_ceiling_penalty)
+        self.reward_z_stick_recent_window_steps = int(config.reward_z_stick_recent_window_steps)
+        self.reward_z_stick_recent_dz_min_m = float(config.reward_z_stick_recent_dz_min_m)
+        self.reward_low_altitude_m = float(config.reward_low_altitude_m)
+        self.reward_low_altitude_far_m = float(config.reward_low_altitude_far_m)
+        self.reward_low_altitude_stuck_penalty = float(config.reward_low_altitude_stuck_penalty)
+        self.reward_climb_toward_wind_coef = float(config.reward_climb_toward_wind_coef)
+        self.reward_climb_toward_wind_min_dz_m = float(config.reward_climb_toward_wind_min_dz_m)
+        self.reward_adverse_wind_close_radius_m = float(config.reward_adverse_wind_close_radius_m)
+        self.reward_adverse_wind_close_penalty = float(config.reward_adverse_wind_close_penalty)
         self.reward_z_stick_window_steps = int(config.reward_z_stick_window_steps)
         self.reward_z_stick_min_std_m = float(config.reward_z_stick_min_std_m)
         self.reward_z_stick_penalty = float(config.reward_z_stick_penalty)
@@ -95,6 +127,7 @@ class BalloonEnv(gym.Env):
         self._z_window: deque[float] = deque(maxlen=max(1, self.reward_z_stick_window_steps))
         self._z_window_sum = 0.0
         self._z_window_sumsq = 0.0
+        self._recent_z: deque[float] = deque(maxlen=max(1, self.reward_z_stick_recent_window_steps))
         self.normalize_observations = bool(config.normalize_observations)
         self.randomize_start_state = config.randomize_start_state
         self.randomize_start_time = config.randomize_start_time
@@ -102,11 +135,16 @@ class BalloonEnv(gym.Env):
         self.train_initial_position_delta = np.array(config.train_initial_position_delta, dtype=np.float32)
         self.train_target_position_delta = np.array(config.train_target_position_delta, dtype=np.float32)
         self.action_limit = np.float32(config.action_limit)
-        self.target_reach_radius = np.float32(config.target_reach_radius)
+        self.target_reach_radius = np.float32(
+            config.target_reach_radius_initial
+            if config.randomize_start_state
+            else config.target_reach_radius
+        )
         self.target_vertical_reach_radius = np.float32(config.target_vertical_reach_radius)
         self.obs_probe_altitudes_m = OBS_PROBE_ALTITUDES_M
         self.wind_interp = wind_interp
         self.world_bounds: WorldBounds = wind_interp.world_bounds
+        self._z_max_m = float(self.world_bounds.z_max)
         self.env_idx = env_idx
         self.render_mode = "ansi"
         self._step_count = 0
@@ -126,7 +164,7 @@ class BalloonEnv(gym.Env):
         #   position(3) + target_position(3) + delta_position(3) + wind(3)
         #   + energy(1) + air_weight(1) + vertical_speed(1)
         #   + vertical_acceleration(1) + air_density(1) + temperature(1) + pressure(1)
-        #   + wind_toward(1) + wind_toward@probe_altitudes(3)
+        #   + wind_toward(1) + wind_toward@probe_altitudes(N) + nav(2) + probe_gradients(N-1)
         self.action_space = spaces.Box(low=-self.action_limit, high=self.action_limit, shape=(1,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(OBS_DIM,), dtype=np.float32)
 
@@ -177,6 +215,8 @@ class BalloonEnv(gym.Env):
         self._consecutive_negative_horizontal_progress = 0
         self._idle_action_streak = 0
         self._reset_z_window(float(position[2]))
+        self._recent_z.clear()
+        self._recent_z.append(float(position[2]))
 
     def _reset_z_window(self, z: float) -> None:
         self._z_window.clear()
@@ -202,7 +242,55 @@ class BalloonEnv(gym.Env):
         var = sumsq_z / count - mean * mean
         return float(np.sqrt(max(0.0, var)))
 
-    def _wind_streak_terms(self, wind_toward: float) -> tuple[float, float]:
+    def _append_recent_z(self, z: float) -> None:
+        self._recent_z.append(z)
+
+    def _recent_z_range(self) -> float:
+        if len(self._recent_z) < 2:
+            return 0.0
+        values = self._recent_z
+        return float(max(values) - min(values))
+
+    def _probe_winds(
+        self,
+        position: np.ndarray,
+        target: np.ndarray,
+    ) -> np.ndarray:
+        return np.array(
+            [self._probe_wind_toward(position, target, z) for z in self.obs_probe_altitudes_m],
+            dtype=np.float32,
+        )
+
+    def _distance_regression_term(self, curr_horizontal: float) -> float:
+        if curr_horizontal <= self._best_horizontal_distance * self.reward_distance_regression_rel_ratio:
+            return 0.0
+        regression_m = max(0.0, curr_horizontal - self._best_horizontal_distance)
+        if regression_m < self.reward_distance_regression_min_m:
+            return 0.0
+        raw = (
+            -self.reward_distance_regression_coef
+            * regression_m
+            / self.reward_distance_regression_scale_m
+        )
+        return max(raw, -self.reward_distance_regression_max_term)
+
+    def _wind_probe_best_term(self, wind_toward: float, probe_winds: np.ndarray) -> float:
+        best_probe = float(np.max(probe_winds))
+        delta = best_probe - wind_toward
+        if delta < self.reward_wind_probe_best_min_delta:
+            return 0.0
+        return self.reward_wind_probe_best_coef * delta / self.reward_wind_align_scale
+
+    def _horizontal_progress_zone_multiplier(self, dist_xy: float) -> float:
+        if dist_xy <= self.reward_progress_zone_near_m:
+            return self.reward_progress_zone_finish_mult
+        if dist_xy <= self.reward_progress_zone_mid_m:
+            return self.reward_progress_zone_near_mult
+        if dist_xy <= self.reward_progress_zone_far_m:
+            return self.reward_progress_zone_mid_mult
+        return 1.0
+
+    def _wind_streak_terms(self, wind_toward: float, horizontal_progress: float) -> tuple[float, float]:
         """Бонус за удержание попутного ветра; штраф за долгое «застревание» во встречном слое."""
         if wind_toward > self.reward_wind_favorable_threshold:
             self._consecutive_favorable_wind += 1
@@ -215,7 +303,10 @@ class BalloonEnv(gym.Env):
             self._consecutive_adverse_wind = 0
 
         streak_term = 0.0
-        if self._consecutive_favorable_wind >= self.reward_wind_favorable_streak_steps:
+        if (
+            self._consecutive_favorable_wind >= self.reward_wind_favorable_streak_steps
+            and horizontal_progress > 0.0
+        ):
             streak_term = self.reward_wind_favorable_streak_bonus
 
         adverse_streak_term = 0.0
@@ -259,6 +350,8 @@ class BalloonEnv(gym.Env):
 
         wind_toward = self._wind_toward_target(target, current_position, wind)
         wind_align_delta = wind_toward - self._prev_wind_toward
+        probe_winds = self._probe_winds(current_position, target)
+        current_z = float(current_position[2])
 
         if horizontal_progress < 0.0:
             self._consecutive_negative_horizontal_progress += 1
@@ -283,12 +376,14 @@ class BalloonEnv(gym.Env):
             * wind_align_delta
             / self.reward_wind_align_scale
         )
-        progress_term = self._asymmetric_progress_term(
+        progress_zone_mult = self._horizontal_progress_zone_multiplier(curr_horizontal)
+        horizontal_progress_term = progress_zone_mult * self._asymmetric_progress_term(
             horizontal_progress,
             self.reward_horizontal_progress_scale,
             self.reward_horizontal_progress_pos_coef,
             self.reward_horizontal_progress_neg_coef,
-        ) + self._asymmetric_progress_term(
+        )
+        progress_term = horizontal_progress_term + self._asymmetric_progress_term(
             vertical_progress,
             self.reward_vertical_progress_scale,
             self.reward_vertical_progress_pos_coef,
@@ -297,16 +392,33 @@ class BalloonEnv(gym.Env):
         distance_term = (
             -self.reward_horizontal_distance_coef * curr_horizontal / self.reward_horizontal_distance_scale
         )
+        if curr_horizontal < self.reward_distance_near_radius_m:
+            ratio = curr_horizontal / self.reward_horizontal_distance_scale
+            distance_term -= self.reward_distance_near_quad_coef * ratio * ratio
         energy_term = -self.reward_energy_coef * energy_delta / self.reward_energy_scale
         boundary_term = (
             -self.reward_boundary_penalty if self.sim.last_step_boundary_contact else 0.0
         )
         best_distance_term = 0.0
         if curr_horizontal < self._best_horizontal_distance:
-            best_distance_term = self.reward_best_distance_bonus
+            if curr_horizontal <= self.reward_best_distance_max_dist_m:
+                best_distance_term = self.reward_best_distance_bonus * (
+                    prev_horizontal / self.reward_best_distance_max_dist_m
+                )
             self._best_horizontal_distance = curr_horizontal
 
-        wind_streak_term, wind_adverse_streak_term = self._wind_streak_terms(wind_toward)
+        regression_term = self._distance_regression_term(curr_horizontal)
+
+        hold_close_term = 0.0
+        if curr_horizontal < self.reward_hold_close_radius_m:
+            hold_close_term = self.reward_hold_close_bonus
+
+        wind_probe_best_term = self._wind_probe_best_term(wind_toward, probe_winds)
+
+        wind_streak_term, wind_adverse_streak_term = self._wind_streak_terms(
+            wind_toward,
+            horizontal_progress,
+        )
 
         wind_scan_term = 0.0
         dz_signed = float(current_position[2] - previous_position[2])
@@ -318,9 +430,41 @@ class BalloonEnv(gym.Env):
                 / self.reward_wind_align_scale
             )
 
+        adverse_wind_close_term = 0.0
+        if curr_horizontal < self.reward_adverse_wind_close_radius_m and wind_toward < 0.0:
+            adverse_wind_close_term = -self.reward_adverse_wind_close_penalty
+
         high_altitude_term = 0.0
-        if current_position[2] > self.reward_high_altitude_m and wind_toward < 0.0:
+        if current_z > self.reward_high_altitude_m and wind_toward < 0.0:
             high_altitude_term = -self.reward_high_altitude_adverse_penalty
+
+        ceiling_term = 0.0
+        if current_z > self.reward_ceiling_altitude_m and horizontal_progress < 0.0:
+            ceiling_term = -self.reward_ceiling_adverse_progress_penalty
+
+        z_max_ceiling_term = 0.0
+        if current_z >= self._z_max_m * self.reward_z_max_ceiling_ratio:
+            z_max_ceiling_term = -self.reward_z_max_ceiling_penalty
+
+        low_altitude_stuck_term = 0.0
+        if (
+            current_z < self.reward_low_altitude_m
+            and curr_horizontal > self.reward_low_altitude_far_m
+        ):
+            low_altitude_stuck_term = -self.reward_low_altitude_stuck_penalty
+
+        climb_wind_term = 0.0
+        if (
+            current_z < self.reward_low_altitude_m
+            and curr_horizontal > self.reward_low_altitude_far_m
+            and dz >= self.reward_climb_toward_wind_min_dz_m
+            and float(np.max(probe_winds)) > wind_toward + self.reward_wind_probe_best_min_delta
+        ):
+            climb_wind_term = (
+                self.reward_climb_toward_wind_coef
+                * dz
+                / self.reward_wind_align_scale
+            )
 
         if (
             abs(clipped_action) >= self.reward_idle_action_threshold
@@ -334,9 +478,13 @@ class BalloonEnv(gym.Env):
         if self._idle_action_streak >= self.reward_idle_action_streak_steps:
             idle_action_term = -self.reward_idle_action_penalty
 
-        self._append_z_window(float(current_position[2]))
+        self._append_z_window(current_z)
+        self._append_recent_z(current_z)
         z_stick_term = 0.0
-        if len(self._z_window) >= self.reward_z_stick_window_steps:
+        if (
+            len(self._z_window) >= self.reward_z_stick_window_steps
+            and self._recent_z_range() < self.reward_z_stick_recent_dz_min_m
+        ):
             z_std = self._window_std(
                 self._z_window_sum,
                 self._z_window_sumsq,
@@ -353,10 +501,18 @@ class BalloonEnv(gym.Env):
             + energy_term
             + boundary_term
             + best_distance_term
+            + regression_term
+            + hold_close_term
+            + wind_probe_best_term
             + wind_streak_term
             + wind_adverse_streak_term
             + wind_scan_term
+            + adverse_wind_close_term
             + high_altitude_term
+            + ceiling_term
+            + z_max_ceiling_term
+            + low_altitude_stuck_term
+            + climb_wind_term
             + idle_action_term
             + z_stick_term
         )
@@ -392,10 +548,18 @@ class BalloonEnv(gym.Env):
             energy_term=energy_term,
             boundary_term=boundary_term,
             best_distance_term=best_distance_term,
+            regression_term=regression_term,
+            hold_close_term=hold_close_term,
+            wind_probe_best_term=wind_probe_best_term,
             wind_streak_term=wind_streak_term,
             wind_adverse_streak_term=wind_adverse_streak_term,
             wind_scan_term=wind_scan_term,
+            adverse_wind_close_term=adverse_wind_close_term,
             high_altitude_term=high_altitude_term,
+            ceiling_term=ceiling_term,
+            z_max_ceiling_term=z_max_ceiling_term,
+            low_altitude_stuck_term=low_altitude_stuck_term,
+            climb_wind_term=climb_wind_term,
             idle_action_term=idle_action_term,
             z_stick_term=z_stick_term,
             consecutive_favorable_wind=self._consecutive_favorable_wind,
@@ -422,10 +586,18 @@ class BalloonEnv(gym.Env):
             "reward_energy_term": float(energy_term),
             "reward_boundary_term": float(boundary_term),
             "reward_best_distance_term": float(best_distance_term),
+            "reward_distance_regression_term": float(regression_term),
+            "reward_hold_close_term": float(hold_close_term),
+            "reward_wind_probe_best_term": float(wind_probe_best_term),
             "reward_wind_streak_term": float(wind_streak_term),
             "reward_wind_adverse_streak_term": float(wind_adverse_streak_term),
             "reward_wind_scan_term": float(wind_scan_term),
+            "reward_adverse_wind_close_term": float(adverse_wind_close_term),
             "reward_high_altitude_term": float(high_altitude_term),
+            "reward_ceiling_term": float(ceiling_term),
+            "reward_z_max_ceiling_term": float(z_max_ceiling_term),
+            "reward_low_altitude_stuck_term": float(low_altitude_stuck_term),
+            "reward_climb_wind_term": float(climb_wind_term),
             "reward_idle_action_term": float(idle_action_term),
             "reward_z_stick_term": float(z_stick_term),
             "consecutive_favorable_wind": float(self._consecutive_favorable_wind),
@@ -506,10 +678,18 @@ class BalloonEnv(gym.Env):
         energy_term: float,
         boundary_term: float,
         best_distance_term: float,
+        regression_term: float,
+        hold_close_term: float,
+        wind_probe_best_term: float,
         wind_streak_term: float,
         wind_adverse_streak_term: float,
         wind_scan_term: float,
+        adverse_wind_close_term: float,
         high_altitude_term: float,
+        ceiling_term: float,
+        z_max_ceiling_term: float,
+        low_altitude_stuck_term: float,
+        climb_wind_term: float,
         idle_action_term: float,
         z_stick_term: float,
         consecutive_favorable_wind: int,
@@ -535,10 +715,18 @@ class BalloonEnv(gym.Env):
             "reward_energy_term": energy_term,
             "reward_boundary_term": boundary_term,
             "reward_best_distance_term": best_distance_term,
+            "reward_distance_regression_term": regression_term,
+            "reward_hold_close_term": hold_close_term,
+            "reward_wind_probe_best_term": wind_probe_best_term,
             "reward_wind_streak_term": wind_streak_term,
             "reward_wind_adverse_streak_term": wind_adverse_streak_term,
             "reward_wind_scan_term": wind_scan_term,
+            "reward_adverse_wind_close_term": adverse_wind_close_term,
             "reward_high_altitude_term": high_altitude_term,
+            "reward_ceiling_term": ceiling_term,
+            "reward_z_max_ceiling_term": z_max_ceiling_term,
+            "reward_low_altitude_stuck_term": low_altitude_stuck_term,
+            "reward_climb_wind_term": climb_wind_term,
             "reward_idle_action_term": idle_action_term,
             "reward_z_stick_term": z_stick_term,
             "consecutive_favorable_wind": int(consecutive_favorable_wind),
@@ -596,8 +784,15 @@ class BalloonEnv(gym.Env):
         delta = target - position
         wind = np.asarray(sim_result.wind, dtype=np.float32)
         wind_toward = self._wind_toward_target(target, position, wind)
-        probe_winds = np.array(
-            [self._probe_wind_toward(position, target, z) for z in self.obs_probe_altitudes_m],
+        curr_horizontal = self._horizontal_distance(target, position)
+        best_ratio = self._best_horizontal_distance / max(curr_horizontal, 1.0)
+        probe_winds = self._probe_winds(position, target)
+        probe_gradients = np.diff(probe_winds).astype(np.float32)
+        nav_features = np.array(
+            [
+                curr_horizontal / OBS_NAV_DISTANCE_SCALE,
+                best_ratio,
+            ],
             dtype=np.float32,
         )
         if not self.normalize_observations:
@@ -616,6 +811,8 @@ class BalloonEnv(gym.Env):
                     [sim_result.pressure],
                     [wind_toward],
                     probe_winds,
+                    nav_features,
+                    probe_gradients,
                 ],
                 dtype=np.float32,
             )
@@ -642,6 +839,8 @@ class BalloonEnv(gym.Env):
                 [sim_result.pressure / OBS_PRESSURE_SCALE],
                 [wind_toward / REWARD_WIND_ALIGN_SCALE],
                 probe_winds / REWARD_WIND_ALIGN_SCALE,
+                nav_features,
+                probe_gradients / REWARD_WIND_ALIGN_SCALE,
             ],
             dtype=np.float32,
         )

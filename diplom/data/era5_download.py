@@ -28,19 +28,36 @@ def download_era5_pressure(
     chunks_dir: Path | None = None,
     keep_chunks: bool = False,
     workers: int | None = None,
-) -> None:
+    force: bool = False,
+) -> str:
     """Скачать ERA5 в NetCDF.
 
     Без ``workers`` — один запрос CDS сразу в ``outfile``.
     С ``workers`` — чанки по ``_CHUNK_TIMESTEPS`` временных точек (параллельно при workers > 1),
     затем склейка. При ``hour_step=8`` это 8 календарных дней на чанк, при ``hour_step=1`` — 1 день.
+
+    Returns:
+        ``"skipped"`` — файл уже есть и ``force`` не задан;
+        ``"downloaded"`` — запрос выполнен или файл перекачан.
     """
     _check_credentials()
     _ensure_parent(config.outfile)
 
+    resolved_chunks_dir = chunks_dir or _default_chunks_dir(config.outfile)
+
+    if not force and _is_usable_netcdf(config.outfile):
+        typer.secho(
+            f"Файл уже есть, пропуск: {config.outfile}",
+            fg=typer.colors.YELLOW,
+        )
+        return "skipped"
+
+    if force:
+        _remove_existing_download(config.outfile, resolved_chunks_dir)
+
     if workers is None:
         _download_single_file(config)
-        return
+        return "downloaded"
 
     if workers < 1:
         raise typer.BadParameter("workers must be >= 1")
@@ -50,7 +67,6 @@ def download_era5_pressure(
         config.end,
         hour_step=config.hour_step,
     )
-    resolved_chunks_dir = chunks_dir or _default_chunks_dir(config.outfile)
     resolved_chunks_dir.mkdir(parents=True, exist_ok=True)
 
     hours = _cds_time_hours(config.hour_step)
@@ -60,22 +76,19 @@ def download_era5_pressure(
     ]
     total_chunks = len(chunk_day_groups)
 
-    for index, (days, chunk_path) in enumerate(
-        zip(chunk_day_groups, chunk_paths, strict=True), start=1
-    ):
-        if _is_usable_netcdf(chunk_path):
-            typer.secho(
-                f"[{index}/{total_chunks}] Чанк уже есть, пропуск: {chunk_path.name}",
-                fg=typer.colors.YELLOW,
-            )
-
     pending = [
         (index, days, chunk_path)
         for index, (days, chunk_path) in enumerate(
             zip(chunk_day_groups, chunk_paths, strict=True), start=1
         )
-        if not _is_usable_netcdf(chunk_path)
+        if force or not _is_usable_netcdf(chunk_path)
     ]
+    skipped_chunks = total_chunks - len(pending)
+    if skipped_chunks:
+        typer.secho(
+            f"Чанков уже есть, пропуск: {skipped_chunks}/{total_chunks}",
+            fg=typer.colors.YELLOW,
+        )
 
     if pending:
         if workers == 1:
@@ -109,39 +122,29 @@ def download_era5_pressure(
         _remove_chunks(chunk_paths, resolved_chunks_dir)
 
     typer.secho("Готово.", fg=typer.colors.GREEN)
+    return "downloaded"
 
 
 def _download_single_file(config: DownloadConfig) -> None:
     """Скачать весь период одним запросом CDS напрямую в outfile."""
-    if _is_usable_netcdf(config.outfile):
-        typer.secho(
-            f"Файл уже есть, пропуск: {config.outfile}",
-            fg=typer.colors.YELLOW,
-        )
-        typer.secho("Готово.", fg=typer.colors.GREEN)
-        return
-
     import cdsapi  # lazy import to avoid dependency when unused
 
     days = _date_range(config.start, config.end)
     hours = _cds_time_hours(config.hour_step)
-    request = _build_request_range(config, days=days, hours=hours)
+    requests = _build_requests_for_days(config, days=days, hours=hours)
 
     period = f"{config.start} … {config.end}" if config.start != config.end else config.start
     typer.secho(
         f"Запрос ERA5 за {period} → {config.outfile.name} …",
         fg=typer.colors.CYAN,
     )
-    cdsapi.Client().retrieve(
-        "reanalysis-era5-pressure-levels",
-        request,
-        str(config.outfile),
-    )
+    _retrieve_to_path(cdsapi.Client(), requests, config.outfile)
     typer.secho(f"Готово: {config.outfile}", fg=typer.colors.GREEN)
 
 
 def merge_era5_netcdf_files(chunk_paths: Sequence[Path], outfile: Path) -> None:
     """Объединить NetCDF-чанки ERA5 по оси времени в один файл."""
+    import numpy as np
     import xarray as xr  # lazy import to avoid dependency when unused
 
     paths = [Path(path) for path in chunk_paths]
@@ -156,13 +159,17 @@ def merge_era5_netcdf_files(chunk_paths: Sequence[Path], outfile: Path) -> None:
     moved = False
 
     try:
-        with xr.open_mfdataset(
-            [_path_for_netcdf(path) for path in paths],
-            combine="by_coords",
-            parallel=False,
-        ) as dataset:
-            time_dim = _time_dimension(dataset)
-            merged = dataset.sortby(time_dim).load()
+        parts = []
+        for path in paths:
+            with xr.open_dataset(_path_for_netcdf(path)) as dataset:
+                parts.append(dataset.load())
+
+        time_dim = _time_dimension(parts[0])
+        merged = xr.concat(parts, dim=time_dim).sortby(time_dim)
+        time_vals = merged[time_dim].values
+        _, unique_idx = np.unique(time_vals, return_index=True)
+        if len(unique_idx) != merged.sizes[time_dim]:
+            merged = merged.isel({time_dim: np.sort(unique_idx)})
 
         merged.to_netcdf(_path_for_netcdf(tmp_outfile))
         del merged
@@ -249,27 +256,44 @@ def _download_chunks_parallel(
         raise errors[0]
 
 
-def _build_request(config: DownloadConfig, *, days: Sequence[str], hours: list[str]) -> dict:
-    return _build_request_range(config, days=days, hours=hours)
+def _build_request(config: DownloadConfig, *, days: Sequence[str], hours: list[str]) -> list[dict]:
+    return _build_requests_for_days(config, days=days, hours=hours)
 
 
-def _build_request_range(
+def _build_requests_for_days(
     config: DownloadConfig,
     *,
     days: Sequence[str],
     hours: list[str],
-) -> dict:
-    return {
+) -> list[dict]:
+    """Собрать CDS-запросы по календарным месяцам.
+
+    CDS трактует year/month/day как декартово произведение, поэтому нельзя
+    передавать сразу все уникальные годы, месяцы и числа из произвольного
+    списка дат — иначе при чанке через границу месяца подтянутся лишние дни.
+    """
+    by_year_month: dict[tuple[str, str], list[str]] = {}
+    for day in days:
+        key = (day[:4], day[5:7])
+        by_year_month.setdefault(key, []).append(day[8:10])
+
+    common = {
         "product_type": "reanalysis",
         "format": "netcdf",
         "variable": list(config.variables),
         "pressure_level": list(config.pressure_levels),
-        "year": sorted({day[:4] for day in days}),
-        "month": sorted({day[5:7] for day in days}),
-        "day": sorted({day[8:10] for day in days}),
         "time": hours,
         "area": [config.north, config.west, config.south, config.east],
     }
+    return [
+        {
+            **common,
+            "year": [year],
+            "month": [month],
+            "day": sorted(set(day_nums)),
+        }
+        for (year, month), day_nums in sorted(by_year_month.items())
+    ]
 
 
 def _default_chunks_dir(outfile: Path) -> Path:
@@ -315,23 +339,68 @@ def _is_usable_netcdf(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > 0
 
 
-def _retrieve_chunk(client: "CdsClient", request: dict, chunk_path: Path) -> None:
-    """Скачать чанк во временный файл и атомарно переименовать."""
-    _ensure_parent(chunk_path)
-    tmp_path = chunk_path.with_name(f".{chunk_path.name}.part")
+def _remove_existing_download(outfile: Path, chunks_dir: Path) -> None:
+    """Удалить итоговый NetCDF и каталог чанков перед принудительной перекачкой."""
+    if outfile.is_file():
+        outfile.unlink()
+        typer.secho(f"Удалён для --force: {outfile}", fg=typer.colors.YELLOW)
+    if chunks_dir.is_dir():
+        shutil.rmtree(chunks_dir)
+        typer.secho(f"Удалены чанки для --force: {chunks_dir}", fg=typer.colors.YELLOW)
+
+
+def _retrieve_chunk(client: "CdsClient", requests: dict | Sequence[dict], chunk_path: Path) -> None:
+    """Скачать чанк (один или несколько запросов по месяцам) в chunk_path."""
+    if isinstance(requests, dict):
+        request_list = [requests]
+    else:
+        request_list = list(requests)
+
+    _retrieve_to_path(client, request_list, chunk_path)
+
+
+def _retrieve_to_path(
+    client: "CdsClient",
+    requests: Sequence[dict],
+    target_path: Path,
+) -> None:
+    """Скачать один или несколько CDS-запросов и записать в target_path."""
+    if len(requests) == 1:
+        _retrieve_single_netcdf(client, requests[0], target_path)
+        return
+
+    part_paths: list[Path] = []
+    try:
+        for index, request in enumerate(requests):
+            part_path = target_path.with_name(f".{target_path.stem}.part{index}.nc")
+            _retrieve_single_netcdf(client, request, part_path)
+            part_paths.append(part_path)
+        merge_era5_netcdf_files(part_paths, target_path)
+    finally:
+        for part_path in part_paths:
+            try:
+                part_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _retrieve_single_netcdf(client: "CdsClient", request: dict, target_path: Path) -> None:
+    """Скачать один CDS-запрос во временный файл и атомарно переименовать."""
+    _ensure_parent(target_path)
+    tmp_path = target_path.with_name(f".{target_path.name}.part")
     try:
         if tmp_path.exists():
             tmp_path.unlink()
         client.retrieve("reanalysis-era5-pressure-levels", request, str(tmp_path))
         if not _is_usable_netcdf(tmp_path):
             raise RuntimeError(
-                f"CDS не создал NetCDF для {chunk_path.name} "
+                f"CDS не создал NetCDF для {target_path.name} "
                 f"(временный файл: {tmp_path.name})"
             )
-        os.replace(tmp_path, chunk_path)
-        _verify_netcdf_open(chunk_path)
+        os.replace(tmp_path, target_path)
+        _verify_netcdf_open(target_path)
     except Exception:
-        for path in (tmp_path, chunk_path):
+        for path in (tmp_path, target_path):
             try:
                 if path.exists() and path.stat().st_size == 0:
                     path.unlink()

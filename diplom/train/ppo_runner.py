@@ -19,6 +19,7 @@ from diplom.envs.factory import build_env
 from diplom.torch_device import resolve_torch_device
 from diplom.train.clip_log_std_callback import ClipLogStdCallback
 from diplom.train.curriculum_callback import TrainPositionCurriculumCallback
+from diplom.train.ent_coef_schedule_callback import EntCoefScheduleCallback
 from diplom.train.episode_length_curriculum_callback import (
     TrainEpisodeLengthCurriculumCallback,
     build_episode_length_curriculum_stages,
@@ -26,6 +27,7 @@ from diplom.train.episode_length_curriculum_callback import (
 from diplom.train.episode_stats_callback import EpisodeStatsCallback
 from diplom.train.info_logging_callback import InfoLoggingCallback
 from diplom.train.ppo_policy import build_ppo_policy_kwargs
+from diplom.train.target_reach_curriculum_callback import TrainTargetReachCurriculumCallback
 from diplom.world import log_world_bounds
 from diplom.wind.factory import build_wind_interpolator
 from diplom.wind.interp import ensure_wind_interpolator_cache
@@ -256,7 +258,7 @@ def train_ppo(
                 gamma=0.99,
                 gae_lambda=0.95,
                 clip_range=0.2,
-                ent_coef=config.training.ent_coef,
+                ent_coef=config.training.ent_coef_end,
                 vf_coef=0.5,
                 max_grad_norm=config.training.max_grad_norm,
                 policy_kwargs=build_ppo_policy_kwargs(),
@@ -271,9 +273,17 @@ def train_ppo(
             info_callback,
             episode_stats_callback,
             ClipLogStdCallback(),
+            EntCoefScheduleCallback(
+                start=config.training.ent_coef_start,
+                end=config.training.ent_coef_end,
+                decay_timesteps=config.training.ent_coef_decay_timesteps,
+            ),
         ]
         if config.training.curriculum_enabled and config.environment.randomize_start_state:
             learn_callbacks.append(TrainPositionCurriculumCallback(verbose=max(0, ppo_verbose - 1)))
+            learn_callbacks.append(
+                TrainTargetReachCurriculumCallback(verbose=max(0, ppo_verbose - 1))
+            )
         if config.training.episode_length_curriculum_enabled:
             ep_len_stages = build_episode_length_curriculum_stages(
                 min_steps=config.training.episode_length_curriculum_min,

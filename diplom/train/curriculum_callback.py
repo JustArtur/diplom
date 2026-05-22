@@ -10,6 +10,11 @@ from stable_baselines3.common.callbacks import BaseCallback
 # (until_timesteps, initial_delta, target_delta) — этап активен, пока num_timesteps < until.
 DEFAULT_CURRICULUM_STAGES: tuple[tuple[int, np.ndarray, np.ndarray], ...] = (
     (
+        5_000_000,
+        np.array([8_000.0, 8_000.0, 0.0], dtype=np.float32),
+        np.array([8_000.0, 8_000.0, 1_500.0], dtype=np.float32),
+    ),
+    (
         10_000_000,
         np.array([12_000.0, 12_000.0, 0.0], dtype=np.float32),
         np.array([12_000.0, 12_000.0, 1_500.0], dtype=np.float32),
