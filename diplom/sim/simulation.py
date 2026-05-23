@@ -59,7 +59,6 @@ class Simulation:
         self.vertical_acceleration = np.float32(0.0)
         self.energy_spent = np.float32(0.0)
         self.air_density = np.float32(0.0)
-        self._warned_world_bounds = False
         self._warned_dataset_time = False
         self.last_step_boundary_contact = False
         self._wind_buf = np.zeros(3, dtype=np.float32)
@@ -114,16 +113,6 @@ class Simulation:
         self.position[1] = np.float32(self._clamp_scalar(proposed_y, self._y_min, self._y_max))
         self.position[2] = np.float32(self._clamp_scalar(proposed_z, self._z_min, self._z_max))
 
-    def _is_outside_world_bounds(self, proposed_x: float, proposed_y: float, proposed_z: float) -> bool:
-        return (
-            proposed_x < self._x_min
-            or proposed_x > self._x_max
-            or proposed_y < self._y_min
-            or proposed_y > self._y_max
-            or proposed_z < self._z_min
-            or proposed_z > self._z_max
-        )
-
     def _is_above_balloon_ceiling(self, altitude_m: float) -> bool:
         return altitude_m > self._balloon_max_altitude
 
@@ -163,24 +152,9 @@ class Simulation:
         proposed_x = self.position[0] + np.float32(wind.u) * dt
         proposed_y = self.position[1] + np.float32(wind.v) * dt
         proposed_z = self.position[2] + self.vertical_speed * dt
-        px, py, pz = float(proposed_x), float(proposed_y), float(proposed_z)
         self.last_step_boundary_contact = self._is_above_balloon_ceiling(float(self.position[2])) or (
-            self._is_above_balloon_ceiling(pz)
+            self._is_above_balloon_ceiling(float(proposed_z))
         )
-        if not self._warned_world_bounds and self._is_outside_world_bounds(px, py, pz):
-            self._warned_world_bounds = True
-            env_label = f"env_{self.env_idx:03d}" if self.env_idx is not None else "env"
-            warnings.warn(
-                (
-                    f"[{env_label}] Аэростат вышел за границы датасета ERA5; "
-                    f"координаты будут клампиться к диапазону "
-                    f"[{self._x_min:.0f}, {self._x_max:.0f}] м по X "
-                    f"и [{self._y_min:.0f}, {self._y_max:.0f}] м по Y "
-                    f"и [{self._z_min:.0f}, {self._z_max:.0f}] м по Z."
-                ),
-                RuntimeWarning,
-                stacklevel=2,
-            )
 
         # Ограничиваем саму высоту (не приращение) снизу и сверху границами вертикали датасета (ISA).
         self._apply_position(float(proposed_x), float(proposed_y), float(proposed_z))

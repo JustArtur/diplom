@@ -21,7 +21,6 @@ from diplom.data.era5_paths import (
     ERA5_TRAINING_DATA_DIR,
     ERA5_TRAINING_MANIFEST_PATH,
     resolve_dataset_reference,
-    training_logdir_for_dataset,
 )
 from diplom.config import DEFAULT_WINDOW_SIZE
 from diplom.envs.constants import TARGET_REACH_RADIUS
@@ -39,8 +38,9 @@ DEFAULT_VERBOSE = TrainingConfig().verbose
 DEFAULT_TARGET_REACH_RADIUS = TARGET_REACH_RADIUS
 
 _LOGDIR_HELP = (
-    "Родительский каталог; артефакты пишутся в {logdir}/{experiment|имя_датасета}/ "
-    "(имя датасета — NetCDF без .nc; см. --experiment)."
+    "Родительский каталог; run — {logdir}/{experiment|имя_датасета}/PPO_N "
+    "(модель, TensorBoard, trajectories внутри run-каталога; "
+    "имя датасета — NetCDF без .nc; см. --experiment)."
 )
 _START_TIME_HELP = (
     "Момент старта симуляции (ISO 8601). "
@@ -88,7 +88,10 @@ EXPERIMENT_OPTION = typer.Option(
     "",
     "--experiment",
     "-x",
-    help="Имя каталога run-а под --logdir; пусто — имя датасета",
+    help=(
+        "Имя каталога run-а под --logdir; пусто — r-{reward}_o-{obs}_m-{model} "
+        "(нужно то же имя для --resume)"
+    ),
 )
 MANIFEST_OPTION = typer.Option(
     ERA5_TRAINING_MANIFEST_PATH,
@@ -106,7 +109,7 @@ MODEL_OPTION = typer.Option(
     help=f"PPO-политика из diplom.rl.ppo.models: {', '.join(list_model_specs())}",
 )
 REWARD_OPTION = typer.Option(
-    "default",
+    "simple",
     "--reward",
     help=f"Reward-функция из diplom.envs.rewards: {', '.join(list_reward_names())}",
 )
@@ -173,6 +176,19 @@ class PpoTrainingCliOptions:
     obs_name: str
 
 
+def ppo_experiment_name(
+    *,
+    reward_name: str,
+    obs_name: str,
+    model_name: str,
+    experiment_name: str | None = None,
+) -> str:
+    """Имя run-а: явный --experiment или r-{reward}_o-{obs}_m-{model}."""
+    if experiment_name and experiment_name.strip():
+        return experiment_name.strip()
+    return f"r-{reward_name}_o-{obs_name}_m-{model_name}"
+
+
 def _balloon_config(start_time: datetime | None = None) -> BalloonConfig:
     import numpy as np
 
@@ -202,19 +218,20 @@ def build_ppo_app_config(options: PpoTrainingCliOptions) -> AppConfig:
 
     wind = WindConfig()
     if options.dataset is not None:
-        wind = WindConfig(
+        wind = replace(
+            wind,
             path=resolve_dataset_reference(
                 options.dataset,
                 data_dir=options.data_dir,
                 manifest_path=options.manifest_path,
             ),
-            origin_lat=wind.origin_lat,
-            origin_lon=wind.origin_lon,
         )
 
-    effective_logdir = training_logdir_for_dataset(
-        wind.path,
-        options.logdir,
+    effective_logdir = options.logdir
+    run_prefix = ppo_experiment_name(
+        reward_name=options.reward_name,
+        obs_name=options.obs_name,
+        model_name=options.model_name,
         experiment_name=options.experiment_name,
     )
 
@@ -234,7 +251,7 @@ def build_ppo_app_config(options: PpoTrainingCliOptions) -> AppConfig:
             n_envs=options.n_envs,
             device=options.device,
             verbose=options.verbose,
-            experiment_name=options.experiment_name,
+            experiment_name=run_prefix,
             model_name=options.model_name,
         ),
         visualization=_visualization_config(options.start_time),
@@ -282,7 +299,7 @@ def ppo_training_options(
     experiment_name: Optional[str] = None,
     manifest_path: Path = ERA5_TRAINING_MANIFEST_PATH,
     model_name: str = "default",
-    reward_name: str = "default",
+    reward_name: str = "simple",
     obs_name: str = "default",
 ) -> PpoTrainingCliOptions:
     return PpoTrainingCliOptions(

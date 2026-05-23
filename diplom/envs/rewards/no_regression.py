@@ -2,12 +2,12 @@
 
 CLI: ``--reward no_regression``
 
-Отличия от ``default``
+Отличия от полного reward
 ----------------------
 - ``regression_term = 0.0`` всегда (best_horizontal_distance всё ещё обновляется
   для best_distance bonus и obs nav ``best_ratio``).
 
-Все остальные термы и константы — как в ``default``.
+Все остальные термы и константы — как в полном reward.
 
 Когда использовать
 ------------------

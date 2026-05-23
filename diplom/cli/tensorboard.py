@@ -8,7 +8,7 @@ import typer
 def export_tensorboard(
     path: Path = typer.Argument(
         ...,
-        help="Файл events.out.tfevents.* или каталог (tb_1, PPO_N, ppo)",
+        help="Файл events.out.tfevents.* или каталог (tb_1, {датасет}/PPO_N, ppo)",
     ),
     recursive: bool = typer.Option(
         True,

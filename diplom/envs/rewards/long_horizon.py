@@ -1,19 +1,29 @@
-"""Reward ``weak_regression`` — ослабленный distance_regression.
+"""Reward ``long_horizon`` — shaping под долгосрочную навигацию стратостата.
 
-CLI: ``--reward weak_regression``
+CLI: ``--reward long_horizon``
 
-Отличия от ``default``
-----------------------
-- ``DISTANCE_REGRESSION_COEF = 0.05`` (было 0.5).
-- ``DISTANCE_REGRESSION_SCALE_M = 5_000`` (было 1_000) — штраф растёт медленнее.
-- ``Z_STICK_WINDOW_STEPS = 10_000`` (было 50_000) — z_stick срабатывает раньше.
+Идея
+----
+Аэростат не может на каждом шаге приближаться к цели: ветер иногда неизбежно
+относит назад. Агент должен терпеть временный drift ради подбора высоты и
+попутного ветра. Награда не требует положительного знака на каждом шаге, но
+различает «правильную подготовку» и бессмысленное отступление.
 
-Остальные термы — как в ``default``.
+Отличия от ``simple``
+---------------------
+- Potential-Based Reward Shaping (PBRS) по XY-дистанции — dense сигнал
+  прогресса без смещения оптимальной политики (``PBRS_GAMMA`` = gamma PPO).
+- Слабее штраф за отрицательный progress (neg coef ↓).
+- Сильнее wind_align / wind_align_delta / wind_scan — награда за позиционирование.
+- ``wind_align`` не обнуляется при серии отрицательного progress.
+- Бонус за попутный ветер на большой дистанции (ожидание / сканирование слоёв).
+- Усилен ``best_distance`` — рекорд близости важнее текущего drift.
+- Без distance, regression, adverse_wind, z_stick, idle штрафов.
 
 Когда использовать
 ------------------
-Компромисс между ``default`` и ``no_regression``: regression есть, но слабее;
-короче окно z_stick для более ранней реакции на «залипание» по высоте.
+Основной эксперимент, когда ``simple`` даёт слишком myopic политику и агент
+боится отступать от цели ради смены высоты.
 """
 
 from __future__ import annotations
@@ -32,49 +42,31 @@ PROGRESS_ZONE_NEAR_M = 1_000.0
 PROGRESS_ZONE_MID_MULT = 3.0
 PROGRESS_ZONE_NEAR_MULT = 10.0
 PROGRESS_ZONE_FINISH_MULT = 25.0
-HORIZONTAL_DISTANCE_SCALE = 75_000.0
-HORIZONTAL_DISTANCE_COEF = 0.01
-DISTANCE_NEAR_RADIUS_M = 50_000.0
-DISTANCE_NEAR_QUAD_COEF = 0.5
-WIND_ALIGN_SCALE = 20.0
-WIND_ALIGN_COEF = 0.5
-WIND_ALIGN_DELTA_COEF = 0.25
-WIND_ALIGN_ADVERSE_PROGRESS_SCALE = 0.25
-WIND_ALIGN_ZERO_PROGRESS_STEPS = 5
-WIND_FAVORABLE_THRESHOLD = 0.0
-WIND_ADVERSE_THRESHOLD = -5.0
-WIND_FAVORABLE_STREAK_STEPS = 80
-WIND_ADVERSE_STREAK_STEPS = 200
-WIND_FAVORABLE_STREAK_BONUS = 0.04
-WIND_ADVERSE_STREAK_PENALTY = 0.1
-HORIZONTAL_PROGRESS_POS_COEF = 3.0
-HORIZONTAL_PROGRESS_NEG_COEF = 0.4
+HORIZONTAL_PROGRESS_POS_COEF = 2.0
+HORIZONTAL_PROGRESS_NEG_COEF = 0.15
 VERTICAL_PROGRESS_POS_COEF = 0.25
-VERTICAL_PROGRESS_NEG_COEF = 0.05
-BEST_DISTANCE_BONUS = 20.0
+VERTICAL_PROGRESS_NEG_COEF = 0.02
+WIND_ALIGN_SCALE = 20.0
+WIND_ALIGN_COEF = 0.8
+WIND_ALIGN_DELTA_COEF = 0.4
+WIND_SCAN_MIN_DZ_M = 10.0
+WIND_SCAN_DELTA_COEF = 3.0
+WIND_SCAN_MAX_DIST_M = 50_000.0
+FAVORABLE_WIND_FAR_RADIUS_M = 5_000.0
+FAVORABLE_WIND_FAR_THRESHOLD = 0.5
+FAVORABLE_WIND_FAR_BONUS = 0.03
+BEST_DISTANCE_BONUS = 30.0
 BEST_DISTANCE_MAX_DIST_M = 50_000.0
-DISTANCE_REGRESSION_COEF = 0.05
-DISTANCE_REGRESSION_SCALE_M = 5_000.0
 HOLD_CLOSE_RADIUS_M = 5_000.0
 HOLD_CLOSE_BONUS = 0.05
-ENERGY_COEF = 0.5
+ENERGY_COEF = 0.3
 ENERGY_SCALE = 100.0
 BOUNDARY_PENALTY = 0.05
-HIGH_ALTITUDE_M = 5000.0
-HIGH_ALTITUDE_ADVERSE_PENALTY = 0.05
-IDLE_ACTION_THRESHOLD = 0.3
-IDLE_ACTION_MIN_DZ_M = 0.1
-IDLE_ACTION_STREAK_STEPS = 40
-IDLE_ACTION_PENALTY = 0.02
-WIND_SCAN_MIN_DZ_M = 20.0
-WIND_SCAN_DELTA_COEF = 2.0
-WIND_SCAN_MAX_DIST_M = 30_000.0
-ADVERSE_WIND_CLOSE_RADIUS_M = 10_000.0
-ADVERSE_WIND_CLOSE_PENALTY = 0.15
-Z_STICK_WINDOW_STEPS = 10_000
-Z_STICK_MIN_STD_M = 200.0
-Z_STICK_PENALTY = 0.03
+PBRS_GAMMA = 0.99
+PBRS_COEF = 0.5
+PBRS_DISTANCE_SCALE = 75_000.0
 SUCCESS_REWARD = 500.0
+Z_STICK_WINDOW_STEPS = 1
 
 
 def _horizontal_distance(target: np.ndarray, position: np.ndarray) -> float:
@@ -115,30 +107,10 @@ def _asymmetric_progress_term(
     return neg_coef * progress / scale
 
 
-def _wind_streak_terms(
-    state: RewardState,
-    wind_toward: float,
-    horizontal_progress: float,
-) -> tuple[float, float]:
-    if wind_toward > WIND_FAVORABLE_THRESHOLD:
-        state.consecutive_favorable_wind += 1
-        state.consecutive_adverse_wind = 0
-    elif wind_toward < WIND_ADVERSE_THRESHOLD:
-        state.consecutive_adverse_wind += 1
-        state.consecutive_favorable_wind = 0
-    else:
-        state.consecutive_favorable_wind = 0
-        state.consecutive_adverse_wind = 0
-
-    streak_term = 0.0
-    if state.consecutive_favorable_wind >= WIND_FAVORABLE_STREAK_STEPS and horizontal_progress > 0.0:
-        streak_term = WIND_FAVORABLE_STREAK_BONUS
-
-    adverse_streak_term = 0.0
-    if state.consecutive_adverse_wind >= WIND_ADVERSE_STREAK_STEPS:
-        adverse_streak_term = -WIND_ADVERSE_STREAK_PENALTY
-
-    return streak_term, adverse_streak_term
+def _pbrs_term(prev_horizontal: float, curr_horizontal: float) -> float:
+    """PBRS: gamma * Phi(s') - Phi(s), Phi(s) = -coef * dist / scale."""
+    delta = prev_horizontal - PBRS_GAMMA * curr_horizontal
+    return PBRS_COEF * delta / PBRS_DISTANCE_SCALE
 
 
 def compute_reward(
@@ -147,7 +119,7 @@ def compute_reward(
     ctx: RewardStepContext,
     state: RewardState,
 ) -> RewardResult:
-    del wind_interp  # зарезервировано для reward-термов с пробами ветра по высоте
+    del wind_interp
 
     target = np.asarray(step.target_position, dtype=np.float32)
     current_position = np.asarray(step.position, dtype=np.float32)
@@ -175,17 +147,9 @@ def compute_reward(
     else:
         state.consecutive_negative_horizontal_progress = 0
 
-    if state.consecutive_negative_horizontal_progress >= WIND_ALIGN_ZERO_PROGRESS_STEPS:
-        wind_progress_scale = 0.0
-    elif horizontal_progress >= 0.0:
-        wind_progress_scale = 1.0
-    else:
-        wind_progress_scale = WIND_ALIGN_ADVERSE_PROGRESS_SCALE
+    wind_align_term = WIND_ALIGN_COEF * wind_toward / WIND_ALIGN_SCALE
+    wind_align_delta_term = WIND_ALIGN_DELTA_COEF * wind_align_delta / WIND_ALIGN_SCALE
 
-    wind_align_term = wind_progress_scale * WIND_ALIGN_COEF * wind_toward / WIND_ALIGN_SCALE
-    wind_align_delta_term = (
-        wind_progress_scale * WIND_ALIGN_DELTA_COEF * wind_align_delta / WIND_ALIGN_SCALE
-    )
     progress_zone_mult = _horizontal_progress_zone_multiplier(curr_horizontal)
     horizontal_progress_term = progress_zone_mult * _asymmetric_progress_term(
         horizontal_progress,
@@ -199,10 +163,8 @@ def compute_reward(
         VERTICAL_PROGRESS_POS_COEF,
         VERTICAL_PROGRESS_NEG_COEF,
     )
-    distance_term = -HORIZONTAL_DISTANCE_COEF * curr_horizontal / HORIZONTAL_DISTANCE_SCALE
-    if curr_horizontal < DISTANCE_NEAR_RADIUS_M:
-        ratio = curr_horizontal / HORIZONTAL_DISTANCE_SCALE
-        distance_term -= DISTANCE_NEAR_QUAD_COEF * ratio * ratio
+
+    pbrs_term = _pbrs_term(prev_horizontal, curr_horizontal)
 
     energy_term = -ENERGY_COEF * ctx.energy_delta / ENERGY_SCALE
     boundary_term = -BOUNDARY_PENALTY if ctx.boundary_contact else 0.0
@@ -213,63 +175,32 @@ def compute_reward(
             best_distance_term = BEST_DISTANCE_BONUS * (prev_horizontal / BEST_DISTANCE_MAX_DIST_M)
         state.best_horizontal_distance = curr_horizontal
 
-    regression_m = max(0.0, curr_horizontal - state.best_horizontal_distance)
-    regression_term = -DISTANCE_REGRESSION_COEF * regression_m / DISTANCE_REGRESSION_SCALE_M
-
     hold_close_term = HOLD_CLOSE_BONUS if curr_horizontal < HOLD_CLOSE_RADIUS_M else 0.0
-
-    wind_streak_term, wind_adverse_streak_term = _wind_streak_terms(
-        state,
-        wind_toward,
-        horizontal_progress,
-    )
 
     dz = abs(float(current_position[2] - previous_position[2]))
     wind_scan_term = 0.0
     if dz >= WIND_SCAN_MIN_DZ_M and wind_align_delta > 0.0 and curr_horizontal <= WIND_SCAN_MAX_DIST_M:
         wind_scan_term = WIND_SCAN_DELTA_COEF * wind_align_delta / WIND_ALIGN_SCALE
 
-    adverse_wind_close_term = 0.0
-    if curr_horizontal < ADVERSE_WIND_CLOSE_RADIUS_M and wind_toward < 0.0:
-        adverse_wind_close_term = -ADVERSE_WIND_CLOSE_PENALTY
+    favorable_wind_far_term = 0.0
+    if curr_horizontal >= FAVORABLE_WIND_FAR_RADIUS_M and wind_toward >= FAVORABLE_WIND_FAR_THRESHOLD:
+        favorable_wind_far_term = FAVORABLE_WIND_FAR_BONUS
 
-    high_altitude_term = 0.0
-    if current_position[2] > HIGH_ALTITUDE_M and wind_toward < 0.0:
-        high_altitude_term = -HIGH_ALTITUDE_ADVERSE_PENALTY
-
-    if abs(ctx.clipped_action) >= IDLE_ACTION_THRESHOLD and dz < IDLE_ACTION_MIN_DZ_M:
-        state.idle_action_streak += 1
-    else:
-        state.idle_action_streak = 0
-
-    idle_action_term = 0.0
-    if state.idle_action_streak >= IDLE_ACTION_STREAK_STEPS:
-        idle_action_term = -IDLE_ACTION_PENALTY
-
-    state.append_z(float(current_position[2]))
-    z_stick_term = 0.0
-    if len(state.z_window) >= Z_STICK_WINDOW_STEPS:
-        z_std = state.window_std(state.z_window_sum, state.z_window_sumsq, len(state.z_window))
-        if z_std < Z_STICK_MIN_STD_M:
-            z_stick_term = -Z_STICK_PENALTY
+    state.consecutive_favorable_wind = 0
+    state.consecutive_adverse_wind = 0
+    state.idle_action_streak = 0
 
     reward = (
         wind_align_term
         + wind_align_delta_term
         + progress_term
-        + distance_term
+        + pbrs_term
         + energy_term
         + boundary_term
         + best_distance_term
-        + regression_term
         + hold_close_term
-        + wind_streak_term
-        + wind_adverse_streak_term
         + wind_scan_term
-        + adverse_wind_close_term
-        + high_altitude_term
-        + idle_action_term
-        + z_stick_term
+        + favorable_wind_far_term
     )
 
     terminated = bool(
@@ -286,19 +217,21 @@ def compute_reward(
         "reward_wind_align_term": wind_align_term,
         "reward_wind_align_delta_term": wind_align_delta_term,
         "reward_progress_term": progress_term,
-        "reward_distance_term": distance_term,
+        "reward_pbrs_term": pbrs_term,
         "reward_energy_term": energy_term,
         "reward_boundary_term": boundary_term,
         "reward_best_distance_term": best_distance_term,
-        "reward_distance_regression_term": regression_term,
         "reward_hold_close_term": hold_close_term,
-        "reward_wind_streak_term": wind_streak_term,
-        "reward_wind_adverse_streak_term": wind_adverse_streak_term,
         "reward_wind_scan_term": wind_scan_term,
-        "reward_adverse_wind_close_term": adverse_wind_close_term,
-        "reward_high_altitude_term": high_altitude_term,
-        "reward_idle_action_term": idle_action_term,
-        "reward_z_stick_term": z_stick_term,
+        "reward_favorable_wind_far_term": favorable_wind_far_term,
+        "reward_distance_term": 0.0,
+        "reward_distance_regression_term": 0.0,
+        "reward_wind_streak_term": 0.0,
+        "reward_wind_adverse_streak_term": 0.0,
+        "reward_adverse_wind_close_term": 0.0,
+        "reward_high_altitude_term": 0.0,
+        "reward_idle_action_term": 0.0,
+        "reward_z_stick_term": 0.0,
     }
 
     return RewardResult(

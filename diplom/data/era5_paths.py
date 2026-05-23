@@ -95,19 +95,14 @@ def era5_dataset_title(path: Path) -> str:
     return path.stem
 
 
-def training_logdir_for_dataset(
+def training_run_prefix(
     dataset_path: Path,
-    parent_logdir: Path,
-    *,
     experiment_name: str | None = None,
-) -> Path:
-    """Каталог артефактов: ``{parent}/{experiment_name|dataset_stem}``."""
-    dir_name = (
-        experiment_name.strip()
-        if experiment_name and experiment_name.strip()
-        else dataset_path.stem
-    )
-    return parent_logdir / dir_name
+) -> str:
+    """Имя run-а: experiment или stem NetCDF без .nc."""
+    if experiment_name and experiment_name.strip():
+        return experiment_name.strip()
+    return dataset_path.stem
 
 
 def resolve_dataset_reference(

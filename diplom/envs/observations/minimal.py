@@ -1,6 +1,6 @@
 """Obs ``minimal`` — упрощённый вектор без probe-слоёв.
 
-CLI: ``--obs minimal``   OBS_DIM = 25
+CLI: ``--obs minimal``   OBS_DIM = 24
 
 Структура вектора
 -----------------
@@ -17,7 +17,7 @@ CLI: ``--obs minimal``   OBS_DIM = 25
 ----------------------
 - Нет probe_winds[8] — ``wind_interp`` не используется.
 - Нет layer gradient (3-й temporal признак).
-- OBS_DIM = 25 vs 33.
+- OBS_DIM = 24 vs 33.
 
 Когда использовать
 ------------------
@@ -26,7 +26,7 @@ CLI: ``--obs minimal``   OBS_DIM = 25
 Совместимость чекпоинтов
 ------------------------
 Размер входа сети фиксируется при обучении. Чекпоинт с ``--obs default`` (33)
-нельзя загрузить с ``--obs minimal`` (25) — и наоборот. При resume/rollout
+нельзя загрузить с ``--obs minimal`` (24) — и наоборот. При resume/rollout
 нужен тот же ``--obs``, что при train.
 """
 
@@ -52,7 +52,7 @@ from diplom.envs.observations.types import ObsStepContext
 from diplom.sim.simulation import SimResult
 from diplom.wind.interp import WindInterpolator
 
-OBS_DIM = 20 + 1 + 2 + 2  # base + wind_toward + nav + temporal (без layer gradient)
+OBS_DIM = 20 + 2 + 2  # base(20, incl. wind_toward) + nav + temporal (без layer gradient)
 
 
 def _horizontal_distance(target: np.ndarray, position: np.ndarray) -> float:

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from diplom.config import AppConfig
-from diplom.rl.ppo.runner import training_run_dir
+from diplom.rl.ppo.runner import training_run_dir_for_config
 from diplom.dev.profiling.cpu import (
     CPROFILE_SUBDIR,
     cprofile_prof_path,
@@ -99,7 +99,7 @@ def run_cprofile_train(
             "Укажите хотя бы один флаг: --profile-main, --profile-envs или --profile-trajectory"
         )
 
-    run_dir = training_run_dir(config.training.logdir)
+    run_dir = training_run_dir_for_config(config)
     n_envs = max(1, config.training.n_envs)
 
     if multiprocess:
@@ -322,7 +322,7 @@ def run_memray_train(
         )
 
     Tracker = _load_tracker()
-    run_dir = training_run_dir(config.training.logdir)
+    run_dir = training_run_dir_for_config(config)
     n_envs = max(1, config.training.n_envs)
 
     if multiprocess:

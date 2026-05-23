@@ -8,6 +8,9 @@ RewardStepContext (immutable, один шаг)
 - ``previous_position`` — XYZ до ``sim.step()``; нужен для progress и dz.
 - ``clipped_action`` — действие агента после clip; idle-штраф.
 - ``energy_delta`` — прирост ``energy_spent`` за шаг.
+- ``sim_time`` — модельное время ERA5 для probe-ветра в reward.
+- ``z_min`` / ``z_max`` — клип probe-высот по границам датасета.
+- ``max_probe_wind_toward`` — max(probe_winds), если BalloonEnv уже посчитал batch; иначе None.
 - ``boundary_contact`` — контакт с границей/потолком датасета.
 - ``step_count`` / ``max_episode_steps`` — truncated при достижении лимита.
 - ``target_reach_radius`` / ``target_vertical_reach_radius`` — success (terminated).
@@ -53,11 +56,15 @@ class RewardStepContext:
     previous_position: np.ndarray
     clipped_action: float
     energy_delta: float
+    sim_time: np.datetime64
+    z_min: float
+    z_max: float
     boundary_contact: bool
     step_count: int
     max_episode_steps: int
     target_reach_radius: float
     target_vertical_reach_radius: float
+    max_probe_wind_toward: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

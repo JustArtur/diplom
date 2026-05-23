@@ -2,12 +2,12 @@
 
 CLI: ``--reward no_z_stick``
 
-Отличия от ``default``
+Отличия от полного reward
 ----------------------
 - ``z_stick_term = 0.0`` — окно Z не влияет на reward.
 - ``Z_STICK_WINDOW_STEPS = 1`` — deque в RewardState минимальный.
 
-Все остальные термы — как в ``default`` (включая distance_regression 0.5).
+Все остальные термы — как в полном reward (включая distance_regression 0.5).
 
 Когда использовать
 ------------------

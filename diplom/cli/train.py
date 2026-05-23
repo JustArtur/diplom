@@ -58,13 +58,21 @@ def train_ppo(
         "--trajectory-wind-cones/--no-trajectory-wind-cones",
         help="Конусы ветра на HTML-графике траекторий (нужны --trajectories)",
     ),
+    trajectory_combined_html: bool = typer.Option(
+        True,
+        "--trajectory-combined-html/--trajectory-separate-html",
+        help=(
+            "Один trajectories.html на всё обучение (по умолчанию) "
+            "или отдельный env_XXX.html на каждый env-процесс"
+        ),
+    ),
     verbose: int = VERBOSE_OPTION,
     resume: bool = typer.Option(
         False,
         "--resume",
         help=(
-            "Продолжить из {logdir}/{experiment|датасет}/ppo_model.zip: та же модель, тот же PPO_N, "
-            "счётчик шагов и кривая TensorBoard без сброса"
+            "Продолжить из {logdir}/{experiment|датасет}/PPO_N/ppo_model.zip: "
+            "тот же run, счётчик шагов и TensorBoard без сброса"
         ),
     ),
     dataset: Optional[str] = DATASET_OPTION,
@@ -111,6 +119,14 @@ def train_ppo(
             environment=replace(
                 app_config.environment,
                 trajectory_show_wind_cones=True,
+            ),
+        )
+    if not trajectory_combined_html:
+        app_config = replace(
+            app_config,
+            environment=replace(
+                app_config.environment,
+                trajectory_combined_html=False,
             ),
         )
     try:

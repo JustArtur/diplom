@@ -31,12 +31,12 @@ def profile_ppo_mem(
         None,
         "--output",
         "-o",
-        help="Файл memray (.bin); по умолчанию <logdir>/PPO_N/memray.bin",
+        help="Файл memray (.bin); по умолчанию <logdir>/{датасет}/PPO_N/memray.bin",
     ),
     flamegraph: Optional[Path] = typer.Option(
         None,
         "--flamegraph",
-        help="HTML flame graph; по умолчанию <logdir>/PPO_N/memray.html",
+        help="HTML flame graph; по умолчанию <logdir>/{датасет}/PPO_N/memray.html",
     ),
     no_flamegraph: bool = typer.Option(
         False,
@@ -76,7 +76,7 @@ def profile_ppo_mem(
     """Профиль памяти при обучении PPO (memray).
 
     Профилирование выключено, пока не передан хотя бы один флаг --profile-*.
-    Каждый включённый процесс пишет свой файл в <logdir>/PPO_N/memray/<имя>.bin.
+    Каждый включённый процесс пишет свой файл в <logdir>/{датасет}/PPO_N/memray/<имя>.bin.
 
     CPU (время): diplom profile-ppo-cpu. Запускайте отдельно — совмещение сильно замедляет прогон.
 
@@ -142,7 +142,7 @@ def profile_ppo_cpu(
         None,
         "--output",
         "-o",
-        help="Файл cProfile; по умолчанию <logdir>/PPO_N/profile.prof",
+        help="Файл cProfile; по умолчанию <logdir>/{датасет}/PPO_N/profile.prof",
     ),
     top_lines: int = typer.Option(40, "--top", help="Сколько строк вывести в таблице"),
     total_timesteps: int = TIMESTEPS_OPTION,
@@ -173,7 +173,7 @@ def profile_ppo_cpu(
     """Профиль CPU (cProfile) при обучении PPO.
 
     Профилирование выключено, пока не передан хотя бы один флаг --profile-*.
-    Каждый включённый процесс пишет свой файл в <logdir>/PPO_N/cprofile/<имя>.prof.
+    Каждый включённый процесс пишет свой файл в <logdir>/{датасет}/PPO_N/cprofile/<имя>.prof.
 
     Память: diplom profile-ppo-mem (memray). Запускайте отдельно от profile-ppo-cpu.
 

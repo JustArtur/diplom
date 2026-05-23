@@ -22,7 +22,7 @@
 Доступные модели
 ----------------
 default  — OBS_DIM=33, probe wind_toward на 8 высотах + nav + temporal
-minimal  — OBS_DIM=25, без probe-слоёв и layer gradient
+minimal  — OBS_DIM=24, без probe-слоёв и layer gradient
 """
 
 from __future__ import annotations

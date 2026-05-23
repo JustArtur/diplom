@@ -17,6 +17,7 @@ from diplom.world import WorldBounds
 from diplom.viz.plotly.episode_figure import (
     build_live_training_parts,
     build_wind_overlay_traces,
+    collect_trajectory_traces,
     TRAJECTORY_LIVE_WIND_OVERLAY,
     latest_sim_time,
     wind_overlay_cache_key,
@@ -36,11 +37,15 @@ from diplom.trajectory.steps_io import (
 )
 
 
-TRAJECTORY_RENDER_QUEUE_SIZE = 64
+PER_ENV_RENDER_QUEUE_SIZE = 1
 STOP_SENTINEL = "__STOP__"
 TRAJECTORY_RENDER_SOCKET_ENV = "DIPLOM_TRAJECTORY_RENDER_SOCKET"
+RENDER_TASK_SEP = "\t"
 SNAPSHOTS_SUBDIR = "_snapshots"
-SNAPSHOT_FILENAME = "snapshot_{num_timesteps:012d}.pkl"
+COMBINED_TRAJECTORY_HTML = "trajectories.html"
+COMBINED_SNAPSHOT_FILENAME = "snapshot_{num_timesteps:012d}.pkl"
+ENV_SNAPSHOT_FILENAME = "snapshot_{num_timesteps:012d}_env_{env_idx:03d}.pkl"
+ALL_ENVS_QUEUE_SUFFIX = "all"
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +59,57 @@ class TrajectoryRenderRequest:
     world_bounds: WorldBounds | None = None
     wind_dataset_path: Path | None = None
     show_wind_cones: bool = False
+    combined_html: bool = True
+
+
+class MultiQueueRenderer:
+    """Round-robin рендер: у каждого queue_id своя очередь размера 1 (только актуальный снимок)."""
+
+    def __init__(self) -> None:
+        self._queues: dict[str, queue.Queue[str]] = {}
+        self._queue_order: list[str] = []
+        self._order_lock = threading.Lock()
+        self._round_robin_idx = 0
+
+    def submit(self, queue_id: str, snapshot_path: str) -> None:
+        with self._order_lock:
+            if queue_id not in self._queues:
+                self._queues[queue_id] = queue.Queue(maxsize=PER_ENV_RENDER_QUEUE_SIZE)
+                self._queue_order.append(queue_id)
+            task_queue = self._queues[queue_id]
+
+        try:
+            task_queue.put_nowait(snapshot_path)
+        except queue.Full:
+            dropped = task_queue.get_nowait()
+            _discard_queued_snapshot(dropped)
+            try:
+                task_queue.put_nowait(snapshot_path)
+            except queue.Full:
+                _discard_queued_snapshot(snapshot_path)
+
+    def poll_once(self) -> bool:
+        with self._order_lock:
+            keys = self._queue_order
+            if not keys:
+                return False
+            start_idx = self._round_robin_idx % len(keys)
+            self._round_robin_idx += 1
+
+        for offset in range(len(keys)):
+            queue_id = keys[(start_idx + offset) % len(keys)]
+            task_queue = self._queues[queue_id]
+            try:
+                snapshot_path = task_queue.get_nowait()
+            except queue.Empty:
+                continue
+            _process_snapshot_path(Path(snapshot_path))
+            return True
+        return False
+
+    def drain(self) -> None:
+        while self.poll_once():
+            pass
 
 
 _wind_interp = None
@@ -65,8 +121,26 @@ def snapshots_dir(output_dir: Path) -> Path:
     return Path(output_dir) / SNAPSHOTS_SUBDIR
 
 
-def snapshot_path_for(output_dir: Path, num_timesteps: int) -> Path:
-    return snapshots_dir(output_dir) / SNAPSHOT_FILENAME.format(num_timesteps=num_timesteps)
+def render_queue_id(output_dir: Path, env_idx: int | None = None) -> str:
+    base = f"{Path(output_dir).resolve()}"
+    if env_idx is None:
+        return f"{base}::{ALL_ENVS_QUEUE_SUFFIX}"
+    return f"{base}::{env_idx}"
+
+
+def snapshot_path_for(
+    output_dir: Path,
+    num_timesteps: int,
+    env_idx: int | None = None,
+) -> Path:
+    if env_idx is None:
+        return snapshots_dir(output_dir) / COMBINED_SNAPSHOT_FILENAME.format(
+            num_timesteps=num_timesteps,
+        )
+    return snapshots_dir(output_dir) / ENV_SNAPSHOT_FILENAME.format(
+        num_timesteps=num_timesteps,
+        env_idx=env_idx,
+    )
 
 
 def write_trajectory_snapshot(snapshot_path: Path, request: TrajectoryRenderRequest) -> None:
@@ -93,7 +167,7 @@ def start_trajectory_render_worker(
     daemon: bool = True,
 ) -> tuple[Queue, Any]:
     """Создать очередь и отдельный процесс для рендера траекторий."""
-    task_queue: Queue = ctx.Queue(maxsize=TRAJECTORY_RENDER_QUEUE_SIZE)
+    task_queue: Queue = ctx.Queue()
     process = ctx.Process(
         target=_render_worker_main,
         args=(task_queue,),
@@ -119,7 +193,7 @@ def start_shared_trajectory_render_server(*, ctx) -> tuple[Path, Any]:
 
 def stop_shared_trajectory_render_server(socket_path: Path, process: Any | None) -> None:
     try:
-        _submit_snapshot_path(str(socket_path), STOP_SENTINEL)
+        _submit_render_task(str(socket_path), STOP_SENTINEL)
     except OSError:
         pass
     socket_path.unlink(missing_ok=True)
@@ -133,21 +207,17 @@ def stop_shared_trajectory_render_server(socket_path: Path, process: Any | None)
 
 def stop_trajectory_render_worker(task_queue: Queue | str | None, process: Any | None) -> None:
     """Остановить процесс рендера, если он был запущен."""
-    if isinstance(task_queue, str) or task_queue is None or process is None:
+    if isinstance(task_queue, str):
+        # Общий socket-сервер (train-parallel-ppo) останавливается снаружи.
+        return
+
+    if task_queue is None or process is None:
         return
 
     try:
         task_queue.put_nowait(STOP_SENTINEL)
     except queue.Full:
-        try:
-            dropped = task_queue.get_nowait()
-            _discard_queued_snapshot(dropped)
-        except queue.Empty:
-            pass
-        try:
-            task_queue.put_nowait(STOP_SENTINEL)
-        except queue.Full:
-            pass
+        pass
 
     process.join(timeout=5.0)
     if process.is_alive():
@@ -155,31 +225,28 @@ def stop_trajectory_render_worker(task_queue: Queue | str | None, process: Any |
         process.join(timeout=5.0)
 
 
-def submit_trajectory_render(task_queue: Queue | str | None, snapshot_path: Path) -> None:
-    """Передать путь к файлу снапшота в очередь рендера."""
+def submit_trajectory_render(
+    task_queue: Queue | str | None,
+    snapshot_path: Path,
+    *,
+    queue_id: str,
+) -> None:
+    """Передать путь к файлу снапшота в очередь рендера (per-env, размер 1)."""
     if task_queue is None:
         return
 
-    path_str = str(snapshot_path.resolve())
+    task = _format_render_task(queue_id, snapshot_path)
     if isinstance(task_queue, str):
         try:
-            _submit_snapshot_path(task_queue, path_str)
+            _submit_render_task(task_queue, task)
         except OSError as exc:
             print(f"[trajectory_render] не удалось отправить снимок: {exc}", flush=True)  # noqa: T201
             snapshot_path.unlink(missing_ok=True)
         return
     try:
-        task_queue.put_nowait(path_str)
+        task_queue.put_nowait(task)
     except queue.Full:
-        try:
-            dropped = task_queue.get_nowait()
-            _discard_queued_snapshot(dropped)
-        except queue.Empty:
-            pass
-        try:
-            task_queue.put_nowait(path_str)
-        except queue.Full:
-            snapshot_path.unlink(missing_ok=True)
+        snapshot_path.unlink(missing_ok=True)
 
 
 def cleanup_snapshots_dir(output_dir: Path) -> None:
@@ -200,6 +267,43 @@ def _discard_queued_snapshot(task: Any) -> None:
     dropped.unlink(missing_ok=True)
 
 
+def _format_render_task(queue_id: str, snapshot_path: Path) -> str:
+    return f"{queue_id}{RENDER_TASK_SEP}{snapshot_path.resolve()}"
+
+
+def _parse_render_task(task: str) -> tuple[str, Path] | None:
+    if task == STOP_SENTINEL:
+        return None
+    if RENDER_TASK_SEP not in task:
+        return ("__legacy__", Path(task))
+    queue_id, path_str = task.split(RENDER_TASK_SEP, 1)
+    return queue_id, Path(path_str)
+
+
+def _run_render_loop(
+    inbox_get: Any,
+    *,
+    inbox_get_timeout: float = 0.05,
+) -> None:
+    hub = MultiQueueRenderer()
+    while True:
+        try:
+            task = inbox_get(timeout=inbox_get_timeout)
+        except queue.Empty:
+            task = None
+
+        if task == STOP_SENTINEL:
+            break
+        if task is not None:
+            parsed = _parse_render_task(str(task))
+            if parsed is not None:
+                queue_id, snapshot_path = parsed
+                hub.submit(queue_id, os.fspath(snapshot_path))
+
+        hub.poll_once()
+    hub.drain()
+
+
 def _render_worker_main(task_queue: Queue) -> None:
     """Фоновый воркер, который строит HTML-файлы траекторий."""
     from diplom.dev.profiling.cpu import (
@@ -215,11 +319,7 @@ def _render_worker_main(task_queue: Queue) -> None:
     start_process_memray_if_enabled(TRAJECTORY_PROCESS_NAME)
     start_process_cprofile_if_enabled(TRAJECTORY_PROCESS_NAME)
     try:
-        while True:
-            task = task_queue.get()
-            if task == STOP_SENTINEL:
-                break
-            _process_snapshot_path(Path(str(task)))
+        _run_render_loop(task_queue.get)
     except Exception:  # noqa: BLE001
         traceback.print_exc()
     finally:
@@ -229,7 +329,7 @@ def _render_worker_main(task_queue: Queue) -> None:
 
 
 def _shared_render_server_main(socket_path: Path) -> None:
-    task_queue: queue.Queue[str] = queue.Queue(maxsize=TRAJECTORY_RENDER_QUEUE_SIZE)
+    inbox: queue.Queue[str | None] = queue.Queue()
     stop_event = threading.Event()
 
     def accept_loop() -> None:
@@ -247,35 +347,17 @@ def _shared_render_server_main(socket_path: Path) -> None:
                     payload = conn.recv(65536).decode().strip()
                 if not payload:
                     continue
+                inbox.put(payload)
                 if payload == STOP_SENTINEL:
-                    try:
-                        task_queue.put_nowait(STOP_SENTINEL)
-                    except queue.Full:
-                        dropped = task_queue.get_nowait()
-                        _discard_queued_snapshot(dropped)
-                        task_queue.put_nowait(STOP_SENTINEL)
                     stop_event.set()
                     break
-                try:
-                    task_queue.put_nowait(payload)
-                except queue.Full:
-                    dropped = task_queue.get_nowait()
-                    _discard_queued_snapshot(dropped)
-                    try:
-                        task_queue.put_nowait(payload)
-                    except queue.Full:
-                        _discard_queued_snapshot(payload)
         finally:
             server.close()
 
     accept_thread = threading.Thread(target=accept_loop, daemon=True)
     accept_thread.start()
     try:
-        while True:
-            task = task_queue.get()
-            if task == STOP_SENTINEL:
-                break
-            _process_snapshot_path(Path(task))
+        _run_render_loop(inbox.get)
     finally:
         _close_wind_interp_cache()
         stop_event.set()
@@ -294,10 +376,10 @@ def _process_snapshot_path(snapshot_path: Path) -> None:
         snapshot_path.unlink(missing_ok=True)
 
 
-def _submit_snapshot_path(socket_path: str, path_str: str) -> None:
+def _submit_render_task(socket_path: str, task: str) -> None:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.connect(socket_path)
-        client.sendall(f"{path_str}\n".encode())
+        client.sendall(f"{task}\n".encode())
 
 
 def _wait_socket_ready(socket_path: Path, timeout_s: float = 10.0) -> None:
@@ -312,9 +394,10 @@ def _wait_socket_ready(socket_path: Path, timeout_s: float = 10.0) -> None:
 
 
 def _episode_from_file_ref(ref: EpisodeFileRef) -> EpisodeVizData:
+    steps_path = ref.steps_path.resolve()
     return EpisodeVizData(
         env_idx=ref.env_idx,
-        steps=load_viz_steps_jsonl(ref.steps_path, step_count=ref.step_count),
+        steps=load_viz_steps_jsonl(steps_path, step_count=ref.step_count),
         target_position=np.asarray(ref.target_position, dtype=np.float32),
         label=ref.label,
     )
@@ -382,50 +465,134 @@ def _render_snapshot(
 ) -> None:
     """Построить и сохранить HTML для снимка траекторий."""
     bounds = _snapshot_bounds(request)
+    env_indices = sorted(
+        set(request.history)
+        | set(request.current_steps_paths)
+    )
+    if not env_indices:
+        return
 
-    for env_idx in range(request.n_envs):
-        episode_refs = request.history.get(env_idx, [])
-        current_path = request.current_steps_paths.get(env_idx)
-        current_step_count = request.current_step_counts.get(env_idx, 0)
-        current_env_steps = (
-            load_viz_steps_jsonl(current_path, step_count=current_step_count)
-            if current_path
-            else []
-        )
-        if not episode_refs and not current_env_steps:
+    if request.combined_html:
+        _render_training_combined(request, output_dir, env_indices, bounds)
+        return
+
+    for env_idx in env_indices:
+        _render_env_html(request, output_dir, env_idx, bounds)
+
+
+def _load_env_viz_data(
+    request: TrajectoryRenderRequest,
+    env_idx: int,
+) -> tuple[list[EpisodeVizData], list[dict[str, Any]], int]:
+    episode_refs = request.history.get(env_idx, [])
+    current_path = request.current_steps_paths.get(env_idx)
+    current_step_count = request.current_step_counts.get(env_idx, 0)
+    current_env_steps = (
+        load_viz_steps_jsonl(current_path, step_count=current_step_count)
+        if current_path
+        else []
+    )
+    history_items = [_episode_from_file_ref(episode) for episode in episode_refs]
+    live_step_count = request.current_step_counts.get(env_idx, len(current_env_steps))
+    return history_items, current_env_steps, live_step_count
+
+
+def _render_training_combined(
+    request: TrajectoryRenderRequest,
+    output_dir: Path,
+    env_indices: list[int],
+    bounds: TrajectoryBounds,
+) -> None:
+    all_traces: list = []
+    wind_current_steps: list[dict[str, Any]] = []
+    wind_history: list[EpisodeVizData] = []
+    latest_wind_time: np.datetime64 | None = None
+
+    for env_idx in env_indices:
+        history_items, current_env_steps, live_step_count = _load_env_viz_data(request, env_idx)
+        if not history_items and not current_env_steps:
             continue
-
-        history_items = [_episode_from_file_ref(episode) for episode in episode_refs]
-        try:
-            live_step_count = request.current_step_counts.get(env_idx, len(current_env_steps))
-            wind_traces, wind_key = _resolve_wind_overlay(
-                wind_dataset_path=request.wind_dataset_path,
-                show_wind_cones=request.show_wind_cones,
-                current_steps=current_env_steps,
-                history=history_items,
-            )
-            parts = build_live_training_parts(
+        all_traces.extend(
+            collect_trajectory_traces(
                 env_idx=env_idx,
                 history=history_items,
                 current_steps=current_env_steps,
                 live_step_count=live_step_count,
-                bounds=bounds,
-                num_timesteps=request.num_timesteps,
-                episode_count=request.episode_counts.get(env_idx, 0),
-                wind_traces=wind_traces,
-                wind_key=wind_key,
             )
-            save_live_trajectory_update(
-                output_dir / f"env_{env_idx:03d}.html",
-                generation=request.num_timesteps,
-                trajectory_traces=parts.trajectory_traces,
-                title=parts.title,
-                bounds=parts.bounds,
-                wind_traces=parts.wind_traces,
-                wind_key=parts.wind_key,
-            )
-        finally:
-            del history_items, current_env_steps
+        )
+        sim_time = latest_sim_time(current_env_steps, history_items)
+        if sim_time is not None and (
+            latest_wind_time is None or sim_time > latest_wind_time
+        ):
+            latest_wind_time = sim_time
+            wind_current_steps = current_env_steps
+            wind_history = history_items
+
+    if not all_traces:
+        return
+
+    wind_traces, wind_key = _resolve_wind_overlay(
+        wind_dataset_path=request.wind_dataset_path,
+        show_wind_cones=request.show_wind_cones,
+        current_steps=wind_current_steps,
+        history=wind_history,
+    )
+    total_episodes = sum(request.episode_counts.get(env_idx, 0) for env_idx in env_indices)
+    title = (
+        f"обучение · {request.n_envs} сред · "
+        f"шаг {request.num_timesteps:,} · "
+        f"завершено эпизодов: {total_episodes}"
+    )
+    save_live_trajectory_update(
+        output_dir / COMBINED_TRAJECTORY_HTML,
+        generation=request.num_timesteps,
+        trajectory_traces=all_traces,
+        title=title,
+        bounds=bounds,
+        wind_traces=wind_traces,
+        wind_key=wind_key,
+    )
+
+
+def _render_env_html(
+    request: TrajectoryRenderRequest,
+    output_dir: Path,
+    env_idx: int,
+    bounds: TrajectoryBounds,
+) -> None:
+    history_items, current_env_steps, live_step_count = _load_env_viz_data(request, env_idx)
+    if not history_items and not current_env_steps:
+        return
+
+    try:
+        wind_traces, wind_key = _resolve_wind_overlay(
+            wind_dataset_path=request.wind_dataset_path,
+            show_wind_cones=request.show_wind_cones,
+            current_steps=current_env_steps,
+            history=history_items,
+        )
+        parts = build_live_training_parts(
+            env_idx=env_idx,
+            history=history_items,
+            current_steps=current_env_steps,
+            live_step_count=live_step_count,
+            bounds=bounds,
+            num_timesteps=request.num_timesteps,
+            episode_count=request.episode_counts.get(env_idx, 0),
+            wind_traces=wind_traces,
+            wind_key=wind_key,
+        )
+        save_live_trajectory_update(
+            output_dir / f"env_{env_idx:03d}.html",
+            generation=request.num_timesteps,
+            trajectory_traces=parts.trajectory_traces,
+            title=parts.title,
+            bounds=parts.bounds,
+            wind_traces=parts.wind_traces,
+            wind_key=parts.wind_key,
+        )
+    finally:
+        del history_items, current_env_steps
 
 
 def _close_wind_interp_cache() -> None:

@@ -12,5 +12,6 @@ DEFAULT_TRAINING_CONFIG = TrainingConfig()
 DEFAULT_ROLLOUT_MODEL_PATH = (
     DEFAULT_TRAINING_CONFIG.logdir
     / era5_dataset_title(DEFAULT_ERA5_OUTFILE)
+    / "PPO_0"
     / "ppo_model.zip"
 )

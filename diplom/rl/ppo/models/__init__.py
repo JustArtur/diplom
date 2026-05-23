@@ -16,6 +16,7 @@ ModelSpec задаёт
 Доступные модели
 ----------------
 default  — MlpPolicy, pi/vf [128, 128], без памяти
+explore  — MlpPolicy, pi/vf [256, 256, 128], больше exploration
 lstm     — MlpLstmPolicy, pi/vf [128], LSTM 256, RecurrentPPO
 """
 

@@ -20,11 +20,12 @@
 
 Доступные модели
 ----------------
-default          — все термы, distance_regression coef=0.5
-simple           — без сложных штрафов (A/B baseline)
+simple           — навигация, ветер, энергия; без «мешающих» термов (дефолт)
+pbrs             — PBRS по 3D-дистанции + probe-слои; энергия только без Δz
+long_horizon     — PBRS + усиленный ветер/scan; слабый штраф за drift (долгий горизонт)
+goal_only        — sparse reward только за достижение цели
 no_regression    — полный reward без distance_regression
 no_z_stick       — полный reward без z_stick (офлайн-симуляции)
-weak_regression  — ослабленный regression + короткое окно z_stick
 weak_z_stick     — полный reward, но мягкий z_stick
 """
 

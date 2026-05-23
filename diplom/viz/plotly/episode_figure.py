@@ -153,7 +153,7 @@ def collect_trajectory_traces(
             env_idx=env_idx,
             steps=current_steps,
             target_position=live_target,
-            label=f"сейчас ({live_step_count} шагов)",
+            label=f"env_{env_idx:03d} · сейчас ({live_step_count} шагов)",
         )
         traces.extend(build_episode_traces(live_ep, line_width=line_width))
     return traces
@@ -188,6 +188,20 @@ def build_live_training_parts(
         wind_traces=wind_traces,
         wind_key=wind_key,
     )
+
+
+def build_placeholder_combined_figure(
+    n_envs: int,
+    world_bounds: WorldBounds | None,
+) -> go.Figure:
+    bounds = compute_trajectory_bounds([], world_bounds=world_bounds)
+    fig = go.Figure()
+    apply_figure_layout(
+        fig,
+        f"обучение ({n_envs} сред) · ожидание данных…",
+        bounds,
+    )
+    return fig
 
 
 def build_placeholder_live_figure(

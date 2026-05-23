@@ -526,6 +526,7 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
     const statusEl = document.getElementById("status");
     let lastGeneration = -1;
     let plotReady = false;
+    let relayoutBound = false;
     let pollTimer = null;
     let polling = false;
     let windData = [];
@@ -619,16 +620,20 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
         if (camera) saveCamera(camera);
         const layout = withCamera(latest.fig.layout, camera || loadStoredCamera());
         const data = windData.concat(latest.fig.data);
+        const traceCountChanged = plotReady && plotDiv.data.length !== data.length;
 
-        if (!plotReady) {
+        if (!plotReady || traceCountChanged) {
           await Plotly.newPlot(plotDiv, data, layout, { responsive: true });
           plotReady = true;
-          plotDiv.on("plotly_relayout", function(eventData) {
-            if (!eventData) return;
-            if (Object.keys(eventData).some(function(k) { return k.indexOf("scene.camera") === 0; })) {
-              saveCamera(readCamera(plotDiv));
-            }
-          });
+          if (!relayoutBound) {
+            plotDiv.on("plotly_relayout", function(eventData) {
+              if (!eventData) return;
+              if (Object.keys(eventData).some(function(k) { return k.indexOf("scene.camera") === 0; })) {
+                saveCamera(readCamera(plotDiv));
+              }
+            });
+            relayoutBound = true;
+          }
         } else {
           await Plotly.react(plotDiv, data, layout);
         }

@@ -147,12 +147,15 @@ class EnvironmentConfig:
     normalize_observations: bool = True
     # Каталог JSONL-шагов для HTML-траекторий; None — не писать шаги на диск.
     trajectory_steps_dir: Path | None = None
-    # Сколько завершённых эпизодов хранить на диске для одной среды (старые удаляются).
+    # Сколько завершённых эпизодов держать в истории HTML-визуализации (старые неуспешные удаляются).
+    # Успешные эпизоды всегда копируются в trajectories/_success/ и с диска не удаляются.
     trajectory_max_history: int = 3
     # Показывать конусы ветра на HTML-графике траекторий.
     trajectory_show_wind_cones: bool = False
+    # True — один trajectories.html на всё обучение; False — env_XXX.html на каждый env.
+    trajectory_combined_html: bool = True
     # Имя reward-функции из diplom.envs.rewards (флаг CLI --reward).
-    reward_name: str = "default"
+    reward_name: str = "simple"
     # Имя obs-модели из diplom.envs.observations (флаг CLI --obs).
     obs_name: str = "default"
 
@@ -184,10 +187,9 @@ EpisodeLengthCurriculumStageInput: TypeAlias = (
 
 
 DEFAULT_EPISODE_LENGTH_CURRICULUM_STAGES: tuple[EpisodeLengthCurriculumStage, ...] = (
-    EpisodeLengthCurriculumStage(0, 7_000_000, 300_000),
-    EpisodeLengthCurriculumStage(7_000_000, 17_000_000, 600_000),
-    EpisodeLengthCurriculumStage(17_000_000, 30_000_000, 900_000),
-    EpisodeLengthCurriculumStage(30_000_000, None, 1_250_000),
+    EpisodeLengthCurriculumStage(0, 4_000_000, 400_000),
+    EpisodeLengthCurriculumStage(4_000_000, 10_000_000, 700_000),
+    EpisodeLengthCurriculumStage(10_000_000, None, 1_250_000),
 )
 
 
@@ -197,13 +199,13 @@ class TrainingConfig:
     total_timesteps: int = 20_000_000
     # Seed для воспроизводимости.
     seed: int = 0
-    # Родительский каталог run-ов; фактический путь — {logdir}/{experiment_name|датасет}/.
+    # Родительский каталог run-ов; артефакты — {logdir}/{experiment_name|датасет}/PPO_N/.
     logdir: Path = Path("ppo")
     # Родительский каталог для profile-ppo-mem / profile-ppo-cpu.
     profile_logdir: Path = Path("profile_ppo")
     # Количество параллельных сред. M1 Pro имеет 10 ядер (8P+2E),
     # больше 8 даёт только IPC-overhead без прироста скорости.
-    n_envs: int = 8
+    n_envs: int = 2
     # Устройство для нейросети PPO: cpu | cuda | mps (см. diplom.torch_device.resolve_torch_device).
     device: str = "cpu"
     # Уровень логирования PPO в консоль (как verbose в Stable-Baselines3): 0 — тихо, 1 — таблица метрик.
@@ -221,7 +223,7 @@ class TrainingConfig:
     learning_rate: float = 1e-4
     # Ограничение нормы градиента (стабильность при всплесках KL).
     max_grad_norm: float = 0.3
-    # Имя эксперимента (каталог под logdir); None — stem NetCDF-датасета (CLI --experiment).
+    # Имя run-а; пустой CLI --experiment → r-{reward}_o-{obs}_m-{model}.
     experiment_name: str | None = None
     # Этапы куррикулума длины эпизода: (from_ts, until_ts, max_episode_steps); until_ts=None — навсегда.
     episode_length_curriculum_enabled: bool = True

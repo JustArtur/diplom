@@ -6,7 +6,7 @@ from functools import partial
 from pathlib import Path
 from typing import Sequence, Union
 
-_RUN_DIR_RE = re.compile(r"^PPO_(\d+)$", re.IGNORECASE)
+_LEGACY_RUN_DIR_RE = re.compile(r"^PPO_(\d+)$", re.IGNORECASE)
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
@@ -30,6 +30,7 @@ from diplom.rl.ppo.policy import build_ppo_policy_kwargs
 from diplom.world import log_world_bounds
 from diplom.wind.factory import build_wind_interpolator
 from diplom.wind.interp import ensure_wind_interpolator_cache
+from diplom.data.era5_paths import training_run_prefix
 
 def _env_factory(
     env_config: EnvironmentConfig,
@@ -93,54 +94,144 @@ def _make_vec_env(
     )
 
 
+def training_run_dir_name(index: int) -> str:
+    """Имя подкаталога run-а: ``PPO_{index}``."""
+    return f"PPO_{index}"
+
+
+def _run_prefix(config: AppConfig) -> str:
+    return training_run_prefix(
+        config.wind.path,
+        config.training.experiment_name,
+    )
+
+
+def _experiment_logdir(parent_logdir: Path, run_prefix: str) -> Path:
+    return parent_logdir / run_prefix
+
+
+def _resolve_run_and_model(
+    parent_logdir: Path,
+    run_prefix: str,
+    *,
+    resume: bool,
+) -> tuple[Path, Path, bool]:
+    """Вернуть (run_dir, model_path, continuing)."""
+    parent_logdir.mkdir(parents=True, exist_ok=True)
+    experiment_dir = _experiment_logdir(parent_logdir, run_prefix)
+    legacy_model = experiment_dir / "ppo_model.zip"
+
+    if resume:
+        run_dir = _latest_run_dir(parent_logdir, run_prefix, experiment_dir=experiment_dir)
+        if run_dir is not None:
+            run_model = run_dir / "ppo_model.zip"
+            if run_model.exists():
+                return run_dir, run_model, True
+        if legacy_model.exists():
+            if run_dir is None:
+                run_dir = experiment_dir
+            return run_dir, legacy_model, True
+
+    run_dir = training_run_dir(parent_logdir, run_prefix, reuse_latest=False)
+    return run_dir, run_dir / "ppo_model.zip", False
+
+
+def training_run_dir(
+    parent_logdir: Path,
+    run_prefix: str,
+    *,
+    reuse_latest: bool = False,
+) -> Path:
+    """Каталог run-а: ``{parent}/{run_prefix}/PPO_N`` (всё внутри, включая модель)."""
+    parent_logdir.mkdir(parents=True, exist_ok=True)
+    experiment_dir = _experiment_logdir(parent_logdir, run_prefix)
+
+    if reuse_latest:
+        existing = _latest_run_dir(parent_logdir, run_prefix, experiment_dir=experiment_dir)
+        if existing is not None:
+            return existing
+
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+    index = _next_ppo_index(experiment_dir)
+    run_dir = experiment_dir / training_run_dir_name(index)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
 def _ppo_index_from_dir_name(name: str) -> int | None:
-    match = _RUN_DIR_RE.fullmatch(name)
+    match = _LEGACY_RUN_DIR_RE.fullmatch(name)
     if match is None:
         return None
     return int(match.group(1))
 
 
-def _next_ppo_index(logdir: Path) -> int:
+def _flat_ppo_index_from_dir_name(name: str, *, run_prefix: str) -> int | None:
+    """Индекс из плоского каталога ``{run_prefix}#PPO_N`` (старый формат)."""
+    prefix = f"{run_prefix}#PPO_"
+    if not name.startswith(prefix):
+        return None
+    suffix = name[len(prefix):]
+    if not suffix.isdigit():
+        return None
+    return int(suffix)
+
+
+def _next_ppo_index(experiment_dir: Path) -> int:
     nums: list[int] = []
-    for path in logdir.iterdir():
-        if not path.is_dir():
-            continue
-        idx = _ppo_index_from_dir_name(path.name)
-        if idx is not None:
-            nums.append(idx)
+    if experiment_dir.is_dir():
+        for path in experiment_dir.iterdir():
+            if not path.is_dir():
+                continue
+            idx = _ppo_index_from_dir_name(path.name)
+            if idx is not None:
+                nums.append(idx)
     return max(nums) + 1 if nums else 0
 
 
-def _latest_run_dir(logdir: Path) -> Path | None:
-    best: tuple[int, Path] | None = None
-    for path in logdir.iterdir():
-        if not path.is_dir():
-            continue
-        idx = _ppo_index_from_dir_name(path.name)
-        if idx is None:
-            continue
-        if best is None or idx > best[0]:
-            best = (idx, path)
-    return best[1] if best is not None else None
+def _latest_run_dir(
+    parent_logdir: Path,
+    run_prefix: str,
+    *,
+    experiment_dir: Path,
+) -> Path | None:
+    nested_best: tuple[int, Path] | None = None
+    if experiment_dir.is_dir():
+        for path in experiment_dir.iterdir():
+            if not path.is_dir():
+                continue
+            idx = _ppo_index_from_dir_name(path.name)
+            if idx is None:
+                continue
+            if nested_best is None or idx > nested_best[0]:
+                nested_best = (idx, path)
+
+    flat_best: tuple[int, Path] | None = None
+    if parent_logdir.is_dir():
+        for path in parent_logdir.iterdir():
+            if not path.is_dir():
+                continue
+            idx = _flat_ppo_index_from_dir_name(path.name, run_prefix=run_prefix)
+            if idx is None:
+                continue
+            if flat_best is None or idx > flat_best[0]:
+                flat_best = (idx, path)
+
+    candidates = [best for best in (nested_best, flat_best) if best is not None]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1]
 
 
-def training_run_dir(
-    logdir: Path,
+def training_run_dir_for_config(
+    config: AppConfig,
     *,
     reuse_latest: bool = False,
 ) -> Path:
-    """Каталог run-а: ``PPO_N`` внутри logdir."""
-    logdir.mkdir(parents=True, exist_ok=True)
-
-    if reuse_latest:
-        existing = _latest_run_dir(logdir)
-        if existing is not None:
-            return existing
-
-    index = _next_ppo_index(logdir)
-    run_dir = logdir / f"PPO_{index}"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    return run_dir
+    return training_run_dir(
+        config.training.logdir,
+        _run_prefix(config),
+        reuse_latest=reuse_latest,
+    )
 
 
 def train_ppo(
@@ -160,8 +251,8 @@ def train_ppo(
     """
     from diplom.trajectory.live.callback import TrajectoryVisualizationCallback
 
-    logdir = config.training.logdir
-    logdir.mkdir(parents=True, exist_ok=True)
+    parent_logdir = config.training.logdir
+    run_prefix = _run_prefix(config)
     device = resolve_torch_device(config.training.device)
     ppo_verbose = config.training.verbose
     model_spec = get_model_spec(config.training.model_name)
@@ -170,19 +261,28 @@ def train_ppo(
     print(f"[train_ppo] Reward: {config.environment.reward_name}")  # noqa: T201
     print(f"[train_ppo] Obs: {config.environment.obs_name}")  # noqa: T201
     print(f"[train_ppo] Dataset: {config.wind.path.name}")  # noqa: T201
-    print(f"[train_ppo] Log directory: {logdir}")  # noqa: T201
+    print(f"[train_ppo] Log directory: {parent_logdir}")  # noqa: T201
+    print(f"[train_ppo] Run prefix: {run_prefix}")  # noqa: T201
 
-    model_path = logdir / "ppo_model.zip"
-    model_exists = model_path.exists()
-    continuing = resume and model_exists
     if run_dir is None:
-        run_dir = training_run_dir(logdir, reuse_latest=continuing)
+        run_dir, model_path, continuing = _resolve_run_and_model(
+            parent_logdir,
+            run_prefix,
+            resume=resume,
+        )
     else:
         run_dir.mkdir(parents=True, exist_ok=True)
+        model_path = run_dir / "ppo_model.zip"
+        continuing = resume and model_path.exists()
 
     reset_num_timesteps = not continuing
     if continuing:
-        print(f"[train_ppo] Продолжаем run и TensorBoard в {run_dir}")  # noqa: T201
+        print(f"[train_ppo] Продолжаем из {model_path}")  # noqa: T201
+        print(f"[train_ppo] TensorBoard и артефакты: {run_dir}")  # noqa: T201
+    elif resume:
+        print(  # noqa: T201
+            f"[train_ppo] --resume: модель не найдена в run-каталогах, начинаем новый run"
+        )
     traj_dir = run_dir / "trajectories"
     print(f"[train_ppo] Run directory: {run_dir}")  # noqa: T201
 
@@ -221,6 +321,7 @@ def train_ppo(
             output_dir=traj_dir,
             wind_dataset_path=config.wind.path,
             show_wind_cones=config.environment.trajectory_show_wind_cones,
+            combined_html=config.environment.trajectory_combined_html,
             open_in_browser=open_trajectory_viz,
         )
         if enable_trajectory_viz
@@ -246,21 +347,19 @@ def train_ppo(
     model: PPO
 
     def _save_model() -> None:
-        model.save(logdir / "ppo_model")
+        model.save(run_dir / "ppo_model")
         print(f"[train_ppo] Модель сохранена в {model_path}")  # noqa: T201
 
     try:
-        # Если в logdir уже есть сохранённая модель, продолжаем обучение с неё.
-        # Иначе инициализируем новую.
-        if model_path.exists() and resume:
+        if continuing:
             print(f"[train_ppo] Продолжаем обучение из {model_path}")  # noqa: T201
             model = ppo_cls.load(model_path, env=vec_env, device=device)
             model.tensorboard_log = str(run_dir)
         else:
             if model_path.exists() and not resume:
                 print(  # noqa: T201
-                    f"[train_ppo] {model_path} найден, но --resume не задан — "
-                    "обучаем новую модель (старый файл будет перезаписан в конце)"
+                    f"[train_ppo] {model_path} уже существует, но --resume не задан — "
+                    "будет перезаписан в конце обучения"
                 )
             model = ppo_cls(
                 policy=model_spec.policy_type,

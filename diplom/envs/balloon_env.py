@@ -12,10 +12,15 @@ from diplom.config import BalloonConfig, EnvironmentConfig, SimulationConfig
 from diplom.envs.constants import TARGET_VERTICAL_REACH_RADIUS
 from diplom.envs.observations import ObsStepContext, get_obs_spec
 from diplom.envs.rewards import RewardState, RewardStepContext
+from diplom.envs.wind_probes import compute_probe_winds, should_compute_probe_winds
 from diplom.sim.factory import create_simulation
 from diplom.sim.simulation import SimResult, Simulation
 from diplom.world import WorldBounds, resolve_balloon_config
-from diplom.trajectory.steps_io import EnvStepsWriter, EpisodeFileRef
+from diplom.trajectory.steps_io import (
+    EnvStepsWriter,
+    EpisodeFileRef,
+    archive_success_episode,
+)
 from diplom.wind.interp import WindInterpolator
 
 
@@ -47,6 +52,8 @@ class BalloonEnv(gym.Env):
         self._compute_reward = self._reward_module.compute_reward
         self._wind_align_scale = float(getattr(self._reward_module, "WIND_ALIGN_SCALE", 20.0))
         self._z_stick_window_steps = int(getattr(self._reward_module, "Z_STICK_WINDOW_STEPS", 50_000))
+        self._obs_needs_probe_winds = config.obs_name == "default"
+        self._reward_needs_probe_winds = bool(getattr(self._reward_module, "NEEDS_PROBE_WINDS", False))
         self.normalize_observations = bool(config.normalize_observations)
         self.randomize_start_state = config.randomize_start_state
         self.train_initial_position_delta = np.array(config.train_initial_position_delta, dtype=np.float32)
@@ -60,6 +67,7 @@ class BalloonEnv(gym.Env):
         self.render_mode = "ansi"
         self._step_count = 0
         self._pending_step: dict[str, Any] | None = None
+        self._pending_step_build: dict[str, Any] | None = None
         self.base_balloon = resolve_balloon_config(config.balloon, self.world_bounds)
 
         self._trajectory_max_history = max(1, int(config.trajectory_max_history))
@@ -89,11 +97,12 @@ class BalloonEnv(gym.Env):
         # На каждый эпизод создаём новое состояние, чтобы не переносить скрытые эффекты между reset().
         self._step_count = 0
         self._pending_step = None
+        self._pending_step_build = None
         episode_balloon = self._episode_balloon()
         self.sim = self._make_sim(episode_balloon)
         snapshot = self.sim.snapshot()
         self._init_episode_reward_state(snapshot)
-        obs = self.to_obs(snapshot)
+        obs = self.to_obs(snapshot, previous_position=None)
         return obs, {}
 
     @staticmethod
@@ -140,6 +149,11 @@ class BalloonEnv(gym.Env):
         current_distance = float(np.linalg.norm(target - current_position))
         energy_delta = max(0.0, float(result.energy_spent) - previous_energy)
 
+        probe_winds, max_probe_wind_toward = self._maybe_compute_probe_winds(
+            result=result,
+            previous_position=previous_position,
+        )
+
         reward_result = self._compute_reward(
             self.wind_interp,
             result,
@@ -148,6 +162,10 @@ class BalloonEnv(gym.Env):
                 previous_position=previous_position,
                 clipped_action=clipped_action,
                 energy_delta=energy_delta,
+                sim_time=self.sim.sim_time,
+                z_min=float(self.world_bounds.z_min),
+                z_max=float(self.world_bounds.z_max),
+                max_probe_wind_toward=max_probe_wind_toward,
                 boundary_contact=bool(self.sim.last_step_boundary_contact),
                 step_count=self._step_count,
                 max_episode_steps=self.max_episode_steps,
@@ -167,43 +185,49 @@ class BalloonEnv(gym.Env):
         terms = reward_result.terms
         progress_reward = horizontal_progress + vertical_progress
 
-        step_record = self._build_step_record(
-            result=result,
-            clipped_action=clipped_action,
-            progress_reward=progress_reward,
-            horizontal_progress=horizontal_progress,
-            vertical_progress=vertical_progress,
-            wind_toward=wind_toward,
-            wind_align_delta=wind_align_delta,
-            current_distance=current_distance,
-            horizontal_distance=curr_horizontal,
-            reward=float(reward),
-            wind_align_term=terms["reward_wind_align_term"],
-            wind_align_delta_term=terms["reward_wind_align_delta_term"],
-            progress_term=terms["reward_progress_term"],
-            distance_term=terms["reward_distance_term"],
-            energy_term=terms["reward_energy_term"],
-            boundary_term=terms["reward_boundary_term"],
-            best_distance_term=terms["reward_best_distance_term"],
-            regression_term=terms["reward_distance_regression_term"],
-            hold_close_term=terms["reward_hold_close_term"],
-            wind_streak_term=terms["reward_wind_streak_term"],
-            wind_adverse_streak_term=terms["reward_wind_adverse_streak_term"],
-            wind_scan_term=terms["reward_wind_scan_term"],
-            adverse_wind_close_term=terms["reward_adverse_wind_close_term"],
-            high_altitude_term=terms["reward_high_altitude_term"],
-            idle_action_term=terms["reward_idle_action_term"],
-            z_stick_term=terms["reward_z_stick_term"],
-            consecutive_favorable_wind=reward_result.consecutive_favorable_wind,
-            consecutive_adverse_wind=reward_result.consecutive_adverse_wind,
-            terminated=terminated,
-            truncated=truncated,
-        )
-        self._pending_step = step_record
+        step_record_kwargs = {
+            "result": result,
+            "clipped_action": clipped_action,
+            "progress_reward": progress_reward,
+            "horizontal_progress": horizontal_progress,
+            "vertical_progress": vertical_progress,
+            "wind_toward": wind_toward,
+            "wind_align_delta": wind_align_delta,
+            "current_distance": current_distance,
+            "horizontal_distance": curr_horizontal,
+            "reward": float(reward),
+            "wind_align_term": terms["reward_wind_align_term"],
+            "wind_align_delta_term": terms["reward_wind_align_delta_term"],
+            "progress_term": terms["reward_progress_term"],
+            "goal_term": terms.get("reward_goal_term", 0.0),
+            "distance_term": terms["reward_distance_term"],
+            "energy_term": terms["reward_energy_term"],
+            "boundary_term": terms["reward_boundary_term"],
+            "best_distance_term": terms["reward_best_distance_term"],
+            "regression_term": terms["reward_distance_regression_term"],
+            "hold_close_term": terms["reward_hold_close_term"],
+            "wind_streak_term": terms["reward_wind_streak_term"],
+            "wind_adverse_streak_term": terms["reward_wind_adverse_streak_term"],
+            "wind_scan_term": terms["reward_wind_scan_term"],
+            "adverse_wind_close_term": terms["reward_adverse_wind_close_term"],
+            "high_altitude_term": terms["reward_high_altitude_term"],
+            "idle_action_term": terms["reward_idle_action_term"],
+            "z_stick_term": terms["reward_z_stick_term"],
+            "consecutive_favorable_wind": reward_result.consecutive_favorable_wind,
+            "consecutive_adverse_wind": reward_result.consecutive_adverse_wind,
+            "terminated": terminated,
+            "truncated": truncated,
+        }
         if self._steps_writer is not None:
+            step_record = self._build_step_record(**step_record_kwargs)
+            self._pending_step = step_record
+            self._pending_step_build = None
             self._steps_writer.append_step(step_record)
             if terminated or truncated:
                 self._finalize_trajectory_episode(step_record)
+        else:
+            self._pending_step = None
+            self._pending_step_build = step_record_kwargs
         info = {
             "progress_reward": float(progress_reward),
             "horizontal_progress": float(horizontal_progress),
@@ -218,7 +242,57 @@ class BalloonEnv(gym.Env):
             "truncated": bool(truncated),
         }
 
-        return self.to_obs(result), float(reward), terminated, truncated, info
+        return self.to_obs(result, previous_position=previous_position, probe_winds=probe_winds), float(reward), terminated, truncated, info
+
+    def _maybe_compute_probe_winds(
+        self,
+        *,
+        result: SimResult,
+        previous_position: np.ndarray | None,
+    ) -> tuple[np.ndarray | None, float | None]:
+        position = np.asarray(result.position, dtype=np.float32)
+        if not should_compute_probe_winds(
+            obs_needs_probes=self._obs_needs_probe_winds,
+            reward_needs_probes=self._reward_needs_probe_winds,
+            previous_position=previous_position,
+            current_position=position,
+        ):
+            return None, None
+        probe_winds, max_probe = compute_probe_winds(
+            self.wind_interp,
+            position=position,
+            target=np.asarray(result.target_position, dtype=np.float32),
+            sim_time=self.sim.sim_time,
+            z_min=float(self.world_bounds.z_min),
+            z_max=float(self.world_bounds.z_max),
+        )
+        return probe_winds, max_probe
+
+    def to_obs(
+        self,
+        sim_result: SimResult,
+        *,
+        previous_position: np.ndarray | None = None,
+        probe_winds: np.ndarray | None = None,
+    ) -> np.ndarray:
+        if probe_winds is None and self._obs_needs_probe_winds:
+            probe_winds, _ = self._maybe_compute_probe_winds(
+                result=sim_result,
+                previous_position=previous_position,
+            )
+        return self._build_obs(
+            self.wind_interp,
+            sim_result,
+            ObsStepContext(
+                sim_time=self.sim.sim_time,
+                z_min=float(self.world_bounds.z_min),
+                z_max=float(self.world_bounds.z_max),
+                normalize=self.normalize_observations,
+                reward_state=self._reward_state,
+                wind_align_scale=self._wind_align_scale,
+                probe_winds=probe_winds,
+            ),
+        )
 
     def consume_step_record(self) -> dict[str, Any]:
         """Отдать запись шага (rollout/отладка) и очистить буфер.
@@ -227,6 +301,9 @@ class BalloonEnv(gym.Env):
         забираются здесь, чтобы ``DummyVecEnv`` не делал deepcopy numpy-массивов.
         При обучении JSONL пишется в subprocess через ``_steps_writer``.
         """
+        if self._pending_step is None and self._pending_step_build is not None:
+            self._pending_step = self._build_step_record(**self._pending_step_build)
+            self._pending_step_build = None
         if self._pending_step is None:
             return {}
         record = self._pending_step
@@ -242,9 +319,16 @@ class BalloonEnv(gym.Env):
             "env_idx": env_idx,
             "episode_count": self._episode_count,
             "history": list(self._episode_history),
-            "current_steps_path": self._steps_writer.current_path,
+            "current_steps_path": self._steps_writer.current_path.resolve(),
             "current_step_count": self._steps_writer.step_count,
         }
+
+    def _trim_episode_history(self) -> None:
+        # Файлы не удаляем здесь: рендер читает их асинхронно из снапшота,
+        # и удаление до завершения рендера оставляет в HTML только текущий эпизод.
+        # Временные JSONL убираются в cleanup_steps_dir() после остановки обучения.
+        while len(self._episode_history) > self._trajectory_max_history:
+            self._episode_history.pop(0)
 
     def _finalize_trajectory_episode(self, last_record: dict[str, Any]) -> None:
         if self._steps_writer is None or self._steps_writer.step_count == 0:
@@ -258,17 +342,28 @@ class BalloonEnv(gym.Env):
         steps_path = self._steps_writer.finalize_episode(ep_num)
         target = tuple(float(v) for v in last_record.get("target_position", [0.0, 0.0, 0.0]))
         env_idx = self.env_idx if self.env_idx is not None else 0
+        success = terminated
+        if success:
+            archived_path = archive_success_episode(
+                steps_path,
+                self._steps_writer.output_dir,
+                env_idx=env_idx,
+                episode_num=ep_num,
+                step_count=step_count,
+            )
+            steps_path.unlink(missing_ok=True)
+            steps_path = archived_path
+
         episode_ref = EpisodeFileRef(
-            steps_path=steps_path,
+            steps_path=Path(steps_path).resolve(),
             env_idx=env_idx,
             target_position=target,
             label=f"ep {ep_num} ({outcome}, {step_count} шагов)",
             step_count=step_count,
+            success=success,
         )
         self._episode_history.append(episode_ref)
-        if len(self._episode_history) > self._trajectory_max_history:
-            old_ref = self._episode_history.pop(0)
-            old_ref.steps_path.unlink(missing_ok=True)
+        self._trim_episode_history()
 
     def _build_step_record(
         self,
@@ -286,6 +381,7 @@ class BalloonEnv(gym.Env):
         wind_align_term: float,
         wind_align_delta_term: float,
         progress_term: float,
+        goal_term: float,
         distance_term: float,
         energy_term: float,
         boundary_term: float,
@@ -318,6 +414,7 @@ class BalloonEnv(gym.Env):
             "reward_wind_align_term": wind_align_term,
             "reward_wind_align_delta_term": wind_align_delta_term,
             "reward_progress_term": progress_term,
+            "reward_goal_term": goal_term,
             "reward_distance_term": distance_term,
             "reward_energy_term": energy_term,
             "reward_boundary_term": boundary_term,
@@ -363,20 +460,6 @@ class BalloonEnv(gym.Env):
         if value > limit:
             return limit
         return value
-
-    def to_obs(self, sim_result: SimResult) -> np.ndarray:
-        return self._build_obs(
-            self.wind_interp,
-            sim_result,
-            ObsStepContext(
-                sim_time=self.sim.sim_time,
-                z_min=float(self.world_bounds.z_min),
-                z_max=float(self.world_bounds.z_max),
-                normalize=self.normalize_observations,
-                reward_state=self._reward_state,
-                wind_align_scale=self._wind_align_scale,
-            ),
-        )
 
     def _make_sim(self, balloon: BalloonConfig) -> Simulation:
         return create_simulation(

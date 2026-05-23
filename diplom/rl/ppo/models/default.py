@@ -23,7 +23,7 @@ CLI: ``--model default``
 
 Совместимость
 --------------
-- obs: ``default`` (33) или ``minimal`` (25) — любой Box obs_dim.
+- obs: ``default`` (33) или ``minimal`` (24) — любой Box obs_dim.
 - reward: любая ``--reward`` (не влияет на архитектуру сети).
 
 Экспорт: ``SPEC`` — передаётся в runner при создании PPO(...).

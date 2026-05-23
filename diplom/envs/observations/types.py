@@ -11,6 +11,7 @@ ObsStepContext — общий контекст шага для всех obs-мо
   last_wind_align_delta для nav/temporal фич; общий объект с reward-модулю).
 - ``wind_align_scale`` — из reward-модуля (``WIND_ALIGN_SCALE``), делитель
   для wind_toward и probe winds в obs.
+- ``probe_winds`` — предвычисленные wind_toward на probe-высотах (BalloonEnv); иначе None.
 """
 
 from __future__ import annotations
@@ -32,3 +33,4 @@ class ObsStepContext:
     normalize: bool
     reward_state: RewardState
     wind_align_scale: float
+    probe_winds: np.ndarray | None = None

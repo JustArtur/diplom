@@ -9,6 +9,7 @@ ENV_INFO_LOG_KEYS: tuple[str, ...] = (
     "distance_to_target",
     "horizontal_progress",
     "reward_progress_term",
+    "reward_goal_term",
     "reward_best_distance_term",
     "reward_distance_regression_term",
     "reward_hold_close_term",
