@@ -7,5 +7,9 @@
 .aiassistant
 **/__pycache__/
 /ppo
+/ppo-pbrs
+/manual
+/.pydeps
+/demos
 /profile_ppo
 /runs

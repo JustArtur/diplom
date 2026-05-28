@@ -130,6 +130,37 @@ class Simulation:
         wind = self.interpolate_wind()
         return self._build_result(wind)
 
+    def clone(self) -> "Simulation":
+        """Создать копию симуляции для lookahead без побочных эффектов."""
+        clone = object.__new__(Simulation)
+        clone.wind_interp = self.wind_interp
+        clone.world_bounds = self.world_bounds
+        clone.env_idx = self.env_idx
+        clone.sim_time = self.sim_time
+        clone.position = np.array(self.position, dtype=np.float32, copy=True)
+        clone.target_position = np.array(self.target_position, dtype=np.float32, copy=True)
+        clone.air_weight = np.float32(self.air_weight)
+        clone.vertical_speed = np.float32(self.vertical_speed)
+        clone.vertical_acceleration = np.float32(self.vertical_acceleration)
+        clone.energy_spent = np.float32(self.energy_spent)
+        clone.air_density = np.float32(self.air_density)
+        clone._warned_dataset_time = self._warned_dataset_time
+        clone.last_step_boundary_contact = self.last_step_boundary_contact
+        clone._wind_buf = np.array(self._wind_buf, dtype=np.float32, copy=True)
+        clone._x_min = self._x_min
+        clone._x_max = self._x_max
+        clone._y_min = self._y_min
+        clone._y_max = self._y_max
+        clone._z_min = self._z_min
+        clone._z_max = self._z_max
+        clone._balloon_max_altitude = self._balloon_max_altitude
+        clone._time_min_ns = self._time_min_ns
+        clone._time_max_ns = self._time_max_ns
+        clone._time_min = self._time_min
+        clone._time_max = self._time_max
+        clone._max_vertical_speed = self._max_vertical_speed
+        return clone
+
     def step(self, dt: float, air_pump_speed: float) -> SimResult:
         """Снос аэростата ветром (горизонтальный + вертикальный).
 
