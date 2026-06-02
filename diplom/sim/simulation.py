@@ -13,6 +13,7 @@ from diplom.sim.constants import (
     ENERGY_COST_PER_KG,
     GAS_CONSTANT,
     GRAVITY_ACCELERATION,
+    HORIZONTAL_WIND_SCALE,
 )
 from diplom.shared_constants import BALLOON_MAX_ALTITUDE, MAX_VERTICAL_SPEED
 from diplom.world import WorldBounds
@@ -165,9 +166,9 @@ class Simulation:
         """Снос аэростата ветром (горизонтальный + вертикальный).
 
         Интегрирование методом Эйлера (первого порядка):
-            x(t+dt) = x(t) + v_x · k · dt
-            y(t+dt) = y(t) + v_y · k · dt
-            z(t+dt) = z(t) + v_z · k · dt
+            x(t+dt) = x(t) + v_x · HORIZONTAL_WIND_SCALE · dt
+            y(t+dt) = y(t) + v_y · HORIZONTAL_WIND_SCALE · dt
+            z(t+dt) = z(t) + v_z · dt
         """
         # np.datetime64 не умеет складываться с float; dt часто < 1 с (DEFAULT_DT=0.5).
         self.sim_time += np.timedelta64(int(round(dt * 1000)), "ms")
@@ -180,8 +181,8 @@ class Simulation:
         self._compute_vertical_speed(wind.pressure, wind.temperature, wind.w, dt)
         self.energy_spent += np.abs(air_mass_delta) * np.float32(ENERGY_COST_PER_KG)
 
-        proposed_x = self.position[0] + np.float32(wind.u) * dt
-        proposed_y = self.position[1] + np.float32(wind.v) * dt
+        proposed_x = self.position[0] + np.float32(wind.u * HORIZONTAL_WIND_SCALE) * dt
+        proposed_y = self.position[1] + np.float32(wind.v * HORIZONTAL_WIND_SCALE) * dt
         proposed_z = self.position[2] + self.vertical_speed * dt
         self.last_step_boundary_contact = self._is_above_balloon_ceiling(float(self.position[2])) or (
             self._is_above_balloon_ceiling(float(proposed_z))
@@ -230,8 +231,8 @@ class Simulation:
 
     def _build_result(self, wind: WindSample) -> SimResult:
         """Собрать объект результата из текущего внутреннего состояния."""
-        self._wind_buf[0] = wind.u
-        self._wind_buf[1] = wind.v
+        self._wind_buf[0] = np.float32(wind.u * HORIZONTAL_WIND_SCALE)
+        self._wind_buf[1] = np.float32(wind.v * HORIZONTAL_WIND_SCALE)
         self._wind_buf[2] = wind.w
         return SimResult(
             position=self.position,

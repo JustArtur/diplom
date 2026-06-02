@@ -20,6 +20,7 @@ def main() -> None:
 
 def _register_commands() -> None:
     from diplom.cli.download import download
+    from diplom.cli.greedy import greedy
     from diplom.cli.profile import profile_ppo_cpu, profile_ppo_mem
     from diplom.cli.rollout import rollout
     from diplom.cli.tensorboard import export_tensorboard
@@ -37,6 +38,7 @@ def _register_commands() -> None:
     app.command("profile-ppo-mem")(profile_ppo_mem)
     app.command("profile-ppo-cpu")(profile_ppo_cpu)
     app.command("rollout")(rollout)
+    app.command()(greedy)
     app.command("wind-viz")(wind_viz)
 
 

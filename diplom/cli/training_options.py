@@ -264,7 +264,13 @@ def balloon_config(start_time: datetime | None = None) -> BalloonConfig:
     return _balloon_config(start_time)
 
 
-def build_default_app_config(*, start_time: datetime | None = None) -> AppConfig:
+def build_default_app_config(
+    *,
+    start_time: datetime | None = None,
+    dataset: str | None = None,
+    data_dir: Path = ERA5_TRAINING_DATA_DIR,
+    manifest_path: Path = ERA5_TRAINING_MANIFEST_PATH,
+) -> AppConfig:
     """Минимальный AppConfig для viz/rollout без параметров обучения."""
     return build_ppo_app_config(
         ppo_training_options(
@@ -277,8 +283,9 @@ def build_default_app_config(*, start_time: datetime | None = None) -> AppConfig
             target_reach_radius=DEFAULT_TARGET_REACH_RADIUS,
             start_time=start_time,
             randomize_position=False,
-            dataset=None,
-            data_dir=ERA5_TRAINING_DATA_DIR,
+            dataset=dataset,
+            data_dir=data_dir,
+            manifest_path=manifest_path,
         )
     )
 

@@ -21,7 +21,7 @@ class HudState:
     energy_spent: float                     # затраченная энергия (ед.)
     vertical_speed: float                   # текущая вертикальная скорость (м/с)
     vertical_acceleration: float            # текущее вертикальное ускорение (м/с²)
-    wind: Tuple[float, float, float]        # последний вектор ветра (u, v, w) м/с
+    wind: Tuple[float, float, float] | np.ndarray  # последний вектор ветра (u, v, w) м/с
     temperature: Optional[float]            # температура воздуха в точке аэростата (K)
     start_monotonic: float                  # отметка monotonic-clock на момент старта
     pressure: float                         # Текущее давление
@@ -67,13 +67,19 @@ class BalloonHUD:
         elapsed = self._clock() - state.start_monotonic
         dist = float(np.linalg.norm(state.target_position - state.position))
 
-        wx, wy, wz = state.wind
+        wx, wy, wz = (float(state.wind[0]), float(state.wind[1]), float(state.wind[2]))
         # |V_h| = √(u² + v²) — модуль горизонтальной скорости ветра
         horiz_speed = float(np.hypot(wx, wy))
         # θ = atan2(u, v) — азимут (курс) ветра, 0° = север, по часовой
         bearing = (float(np.degrees(np.arctan2(wx, wy))) + 360.0) % 360.0
         vert_arrow = "\u2191" if wz >= 0 else "\u2193"
         vert_str = f"{vert_arrow}{abs(wz):.2f}"
+
+        temp_c = (
+            f"{state.temperature - 273.15:.2f}"
+            if state.temperature is not None
+            else "n/a"
+        )
 
         return (
             f"Высота: {state.position[2]:.1f} м  "
@@ -82,7 +88,7 @@ class BalloonHUD:
             f"Ускорение: {state.vertical_acceleration:.2f} м/с²  "
             f"Ветер: {horiz_speed:.1f} м/с  Курс: {bearing:5.1f}\u00b0  "
             f"Верт.: {vert_str} м/с  "
-            f"Температура: {state.temperature - 273.15:.2f} \u00b0C  "
+            f"Температура: {temp_c} \u00b0C  "
             f"Давление: {state.pressure * 100:.2f} Па  "
             f"Цель: {dist:.1f} м  "
             f"Зат. энергии: {state.energy_spent:.0f} ед  "

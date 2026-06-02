@@ -1,5 +1,7 @@
 """Интерактивная 3D-визуализация стратосферного аэростата в ветровом поле."""
 
+from __future__ import annotations
+
 import time
 from functools import partial
 
@@ -17,59 +19,77 @@ from .constants import (
     CAMERA_INITIAL_OFFSET,
     CAMERA_INITIAL_VIEW_UP,
     CAMERA_ORBIT_RADIUS,
-    MAX_FRAME_DELTA_S,
     DEFAULT_AIR_PUMP_SPEED,
+    MAX_FRAME_DELTA_S,
     MIN_TICK_INTERVAL_S,
     ROPE_BOTTOM_Z,
     ROPE_TOP_Z,
     TARGET_RADIUS,
-    TERRAIN_AMP_COS,
-    TERRAIN_AMP_SIN,
-    TERRAIN_FREQ_COS,
-    TERRAIN_FREQ_SIN,
-    TERRAIN_RESOLUTION,
+    TERRAIN_PATCH_SIZE_M,
+    VISIBLE_RADIUS,
     WIND_SPEED_MAX_COLOR,
 )
 from .hud import BalloonHUD, HudState
 from .particles import WindParticles
-from diplom.sim.simulation import Simulation
+from .terrain import build_bushes_mesh, build_terrain_plane
+from diplom.sim.simulation import SimResult, Simulation
 
 
 class BalloonSimulation:
     """Интерактивная визуализация стратостата в ветровом поле (PyVista).
 
-    Обязанности: построение сцены, анимационный цикл, физика движения,
-    управление камерой и HUD.
+    Координаты ERA5 в локальных метрах достигают миллионов по X/Y — в VTK/OpenGL
+    при таких значениях теряется точность. Все объекты рисуются в системе,
+    привязанной к текущей позиции аэростата (аэростат в начале координат).
     """
 
-    # ──────────────────── Инициализация ────────────────────
-    def __init__(self, *, wind_interpolator: WindInterpolator, plotter: pv.Plotter, hud: BalloonHUD,
-                 sim: Simulation) -> None:
-        # ── Физическое состояние ──
-        self.position = sim.position.copy()
-        self.target_position = sim.target_position.copy()
+    def __init__(
+        self,
+        *,
+        wind_interpolator: WindInterpolator,
+        plotter: pv.Plotter,
+        hud: BalloonHUD,
+        sim: Simulation,
+    ) -> None:
+        self.position = np.asarray(sim.position, dtype=np.float64).copy()
+        self.target_position = np.asarray(sim.target_position, dtype=np.float64).copy()
         self.air_pump_speed = 0.0
 
-        # ── Время ──
         self.start_time = time.monotonic()
-        self.sim_time = sim.sim_time
         self._last_tick = self.start_time
 
-        # ── Ветер ──
         self.wind_interpolator = wind_interpolator
         self.sim = sim
 
-        # ── Визуальные компоненты ──
         self.plotter = plotter
         self._hud = hud
-        self._particles = WindParticles(self.position.copy(), wind_interpolator, self.sim_time)
+        self._particles = WindParticles(
+            self.position.astype(np.float32),
+            wind_interpolator,
+            sim.sim_time,
+        )
+        self._balloon_actors: list[pv.Actor] = []
+        self._target_actor: pv.Actor | None = None
+        self._terrain_actor: pv.Actor | None = None
+        self._bushes_actor: pv.Actor | None = None
+        self._key_release_observer_id: int | None = None
+        self._render_observer_id: int | None = None
+        self._interaction_start_observer_id: int | None = None
+        self._interaction_end_observer_id: int | None = None
+        self._user_camera_active = False
 
         self._build_scene()
+        self._apply_snapshot(self.sim.snapshot())
+        self._sync_scene()
 
-    # ──────────────────── Построение сцены ────────────────────
+    def _scene_origin(self) -> np.ndarray:
+        """Мировая позиция аэростата → начало координат сцены."""
+        return self.position.copy()
+
+    def _to_scene(self, world: np.ndarray) -> np.ndarray:
+        return np.asarray(world, dtype=np.float64) - self._scene_origin()
 
     def _build_scene(self) -> None:
-        """Собрать все элементы 3D-сцены и запустить управление."""
         self._build_terrain()
         self._build_balloon()
         self._build_target()
@@ -78,28 +98,28 @@ class BalloonSimulation:
         self._init_camera()
 
     def _build_terrain(self) -> None:
-        """Зелёная поверхность земли с лёгким синтетическим рельефом."""
-        world_bounds = self.sim.world_bounds
-        plane = pv.Plane(
-            center=(world_bounds.center[0], world_bounds.center[1], 0.0),
-            i_size=world_bounds.width,
-            j_size=world_bounds.height,
-            i_resolution=TERRAIN_RESOLUTION,
-            j_resolution=TERRAIN_RESOLUTION,
+        """Локальный зелёный патч с рельефом и кустами."""
+        self._terrain_actor = self.plotter.add_mesh(
+            build_terrain_plane(),
+            scalars="colors",
+            rgb=True,
+            show_edges=False,
+            show_scalar_bar=False,
+            name="terrain",
         )
-        x_pts, y_pts = plane.points[:, 0], plane.points[:, 1]
-        plane.points[:, 2] = (
-                TERRAIN_AMP_SIN * np.sin(y_pts * TERRAIN_FREQ_SIN)
-                + TERRAIN_AMP_COS * np.cos(x_pts * TERRAIN_FREQ_COS)  # Добавляем искусственные неровности
-        )
-        green = np.array([34, 139, 34], dtype=np.uint8)
-        plane.point_data["colors"] = np.tile(green, (plane.n_points, 1))  # Зеленый цвет
-        self.plotter.add_mesh(
-            plane, scalars="colors", rgb=True, show_edges=False, show_scalar_bar=False,
-        )
+        bushes = build_bushes_mesh()
+        if bushes.n_points > 0:
+            self._bushes_actor = self.plotter.add_mesh(
+                bushes,
+                scalars="colors",
+                rgb=True,
+                show_edges=False,
+                show_scalar_bar=False,
+                name="bushes",
+            )
 
     def _build_balloon(self) -> None:
-        """Создать меши аэростата (оболочка + верёвка + корзина) один раз."""
+        """Аэростат в начале координат сцены."""
         sphere = pv.Sphere(radius=BALLOON_RADIUS, center=(0, 0, 0))
         rope = pv.Line((0, 0, ROPE_TOP_Z), (0, 0, ROPE_BOTTOM_Z))
         basket = pv.Cube(
@@ -113,16 +133,12 @@ class BalloonSimulation:
             self.plotter.add_mesh(rope, color="saddlebrown", line_width=3, name="rope"),
             self.plotter.add_mesh(basket, color="sienna", name="basket"),
         ]
-        self._move_balloon_to()
 
     def _build_target(self) -> None:
-        """Маркер цели и линия «аэростат → цель»."""
-        target = pv.Sphere(radius=TARGET_RADIUS, center=tuple(self.target_position))
-        self.plotter.add_mesh(target, color="tomato", name="target")
-        self._sync_target_line()
+        target = pv.Sphere(radius=TARGET_RADIUS, center=(0, 0, 0))
+        self._target_actor = self.plotter.add_mesh(target, color="tomato", name="target")
 
     def _init_wind_mesh(self) -> None:
-        """Добавить меш ветровых частиц в сцену (меш создаётся внутри WindParticles)."""
         self.plotter.add_mesh(
             self._particles.mesh,
             scalars="speed",
@@ -133,87 +149,181 @@ class BalloonSimulation:
             name="wind",
         )
 
-    # ──────────────────── Обновление визуалов ────────────────────
+    def _apply_snapshot(self, state: SimResult) -> None:
+        self.position = np.asarray(state.position, dtype=np.float64)
+        self.target_position = np.asarray(state.target_position, dtype=np.float64)
+        self.vertical_speed = float(state.vertical_speed)
+        self.vertical_acceleration = float(state.vertical_acceleration)
+        self.energy_spent = float(state.energy_spent)
+        self.temperature = float(state.temperature)
+        self.pressure = float(state.pressure)
+        self.wind = (
+            float(state.wind[0]),
+            float(state.wind[1]),
+            float(state.wind[2]),
+        )
 
-    def _move_balloon_to(self) -> None:
-        """Переместить акторы аэростата через VTK SetPosition."""
-        for actor in self._balloon_actors:
-            actor.position = self.position
+    @staticmethod
+    def _set_actor_position(actor: pv.Actor, xyz: tuple[float, float, float]) -> None:
+        actor.position = xyz
+
+    def _sync_terrain_position(self) -> None:
+        """Уровень земли (z=0 м AMSL) в координатах сцены."""
+        ground_z = -float(self.position[2])
+        ground_pos = (0.0, 0.0, ground_z)
+        if self._terrain_actor is not None:
+            self._set_actor_position(self._terrain_actor, ground_pos)
+        if self._bushes_actor is not None:
+            self._set_actor_position(self._bushes_actor, ground_pos)
+
+    def _move_target_to(self) -> None:
+        if self._target_actor is None:
+            return
+        scene = self._to_scene(self.target_position)
+        self._set_actor_position(
+            self._target_actor,
+            (float(scene[0]), float(scene[1]), float(scene[2])),
+        )
 
     def _sync_target_line(self) -> None:
-        """Обновить линию «аэростат → цель»."""
-        line = pv.Line(tuple(self.position), tuple(self.target_position))
-        self.plotter.add_mesh(line, color="white", line_width=2, name="target_line")
+        start = (0.0, 0.0, 0.0)
+        end = self._to_scene(self.target_position)
+        line = pv.Line(start, tuple(end))
+        self.plotter.add_mesh(
+            line,
+            color="white",
+            line_width=4,
+            name="target_line",
+        )
 
     def _sync_hud(self) -> None:
-        """Передать текущее состояние в HUD."""
-        self._hud.update(HudState(
-            position=self.position.copy(),
-            target_position=self.target_position,
-            energy_spent=self.energy_spent,
-            vertical_speed=self.vertical_speed,
-            vertical_acceleration=self.vertical_acceleration,
-            wind=self.wind,
-            temperature=self.temperature,
-            pressure=self.pressure,
-            start_monotonic=self.start_time,
-        ))
+        self._hud.update(
+            HudState(
+                position=self.position.astype(np.float32).copy(),
+                target_position=self.target_position.astype(np.float32),
+                energy_spent=self.energy_spent,
+                vertical_speed=self.vertical_speed,
+                vertical_acceleration=self.vertical_acceleration,
+                wind=self.wind,
+                temperature=self.temperature,
+                pressure=self.pressure,
+                start_monotonic=self.start_time,
+            )
+        )
 
-    # ──────────────────── Камера ────────────────────
+    def _local_scene_bounds(self) -> tuple[float, float, float, float, float, float]:
+        target_scene = self._to_scene(self.target_position)
+        pad_xy = max(TERRAIN_PATCH_SIZE_M * 0.55, VISIBLE_RADIUS * 2.0)
+        z_vals = [0.0, float(target_scene[2]), -float(self.position[2])]
+        z_pad = max(400.0, abs(z_vals[1]) * 0.35 + 300.0)
+        x_vals = [0.0, float(target_scene[0])]
+        y_vals = [0.0, float(target_scene[1])]
+        return (
+            min(x_vals) - pad_xy,
+            max(x_vals) + pad_xy,
+            min(y_vals) - pad_xy,
+            max(y_vals) + pad_xy,
+            min(z_vals) - z_pad,
+            max(z_vals) + z_pad,
+        )
+
+    def _reset_camera_local(self) -> None:
+        self.plotter.reset_camera(bounds=self._local_scene_bounds(), render=False)
+        cam = self.plotter.camera
+        cam.focal_point = (0.0, 0.0, 0.0)
+        direction = np.asarray(CAMERA_INITIAL_OFFSET, dtype=np.float64)
+        direction /= np.linalg.norm(direction)
+        cam.position = tuple(direction * CAMERA_ORBIT_RADIUS)
+        cam.up = CAMERA_INITIAL_VIEW_UP
+        target_z = float(self._to_scene(self.target_position)[2])
+        cam.clipping_range = (
+            max(1.0, CAMERA_ORBIT_RADIUS * 0.05),
+            max(CAMERA_ORBIT_RADIUS * 4.0, target_z + 2_000.0),
+        )
 
     def _init_camera(self) -> None:
-        """Начальная позиция камеры."""
         self.plotter.add_axes()
-        cam = self.plotter.camera
-        cam.focal_point = tuple(self.position)
-        cam.position = tuple(self.position + CAMERA_INITIAL_OFFSET)
-        cam.up = CAMERA_INITIAL_VIEW_UP
+        self._reset_camera_local()
 
     def _follow_camera(self) -> None:
-        """Переместить камеру за аэростатом, сохраняя направление взгляда."""
+        if self._user_camera_active:
+            return
         cam = self.plotter.camera
-        direction = np.asarray(cam.position, dtype=np.float32) - np.asarray(cam.focal_point, dtype=np.float32)
-
+        direction = (
+            np.asarray(cam.position, dtype=np.float64)
+            - np.asarray(cam.focal_point, dtype=np.float64)
+        )
         dist = float(np.linalg.norm(direction))
-        # Нормализуем вектор
         if dist < CAMERA_DIRECTION_EPS:
             direction = CAMERA_INITIAL_OFFSET / CAMERA_ORBIT_RADIUS
         else:
             direction /= dist
-        cam.focal_point = tuple(self.position)
-        cam.position = tuple(self.position + direction * CAMERA_ORBIT_RADIUS)
+        cam.focal_point = (0.0, 0.0, 0.0)
+        cam.position = tuple(direction * CAMERA_ORBIT_RADIUS)
 
-    # ──────────────────── Управление ────────────────────
+    def _sync_scene(self) -> None:
+        self._sync_terrain_position()
+        self._move_target_to()
+        self._sync_target_line()
+        self._sync_hud()
 
     def _setup_controls(self) -> None:
-        """Привязать клавиши и таймеры анимации."""
         self.plotter.add_key_event("a", partial(self._set_air_pump_speed, -DEFAULT_AIR_PUMP_SPEED))
         self.plotter.add_key_event("z", partial(self._set_air_pump_speed, DEFAULT_AIR_PUMP_SPEED))
-        self.plotter.iren.add_observer("KeyReleaseEvent", self._stop_ballon)
+        self.plotter.add_timer_event(
+            max_steps=10**9,
+            duration=ANIM_INTERVAL_MS,
+            callback=self._on_timer,
+        )
 
-        self.plotter.add_timer_event(max_steps=10 ** 9, duration=ANIM_INTERVAL_MS, callback=self._on_timer)
-        self.plotter.iren.add_observer("RenderEvent", self._on_render)
+    def _register_interactor_observers(self) -> None:
+        """Подписки на interactor: отпускание клавиш, рендер, ручная камера."""
+        iren = self.plotter.iren
+        if iren is None:
+            return
+        if self._key_release_observer_id is None:
+            self._key_release_observer_id = iren.add_observer(
+                "KeyReleaseEvent",
+                self._stop_ballon,
+            )
+        if self._render_observer_id is None:
+            self._render_observer_id = iren.add_observer(
+                "RenderEvent",
+                self._on_render,
+            )
+        if self._interaction_start_observer_id is None:
+            self._interaction_start_observer_id = iren.add_observer(
+                "StartInteractionEvent",
+                self._on_start_interaction,
+            )
+        if self._interaction_end_observer_id is None:
+            self._interaction_end_observer_id = iren.add_observer(
+                "EndInteractionEvent",
+                self._on_end_interaction,
+            )
+
+    def _on_start_interaction(self, *_args) -> None:
+        self._user_camera_active = True
+
+    def _on_end_interaction(self, *_args) -> None:
+        self._user_camera_active = False
 
     def _set_air_pump_speed(self, speed: float) -> None:
-        """Задаем скорость закачки воздуха в баллон."""
         self.air_pump_speed = speed
 
-    def _stop_ballon(self, obj, _event) -> None:
-        """Убираем скорость шара"""
-        key = obj.GetKeySym().lower()
+    def _stop_ballon(self, interactor, _event) -> None:
+        key = interactor.GetKeySym().lower()
         if key in ("a", "z"):
             self.air_pump_speed = 0.0
 
-    # ──────────────────── Игровой цикл ────────────────────
-
-    def _on_timer(self, _step: int = 0) -> None:
+    def _on_timer(self, *_args) -> None:
         self._do_tick()
 
     def _on_render(self, *_args) -> None:
-        self._do_tick()
+        """Второй цикл обновления: анимация не замирает при вращении камеры."""
+        self._do_tick(emit_render=False)
 
-    def _do_tick(self) -> None:
-        """Один шаг симуляции + обновление визуализации."""
+    def _do_tick(self, *, emit_render: bool = True) -> None:
         now = time.monotonic()
         dt = now - self._last_tick
         if dt < MIN_TICK_INTERVAL_S:
@@ -221,37 +331,19 @@ class BalloonSimulation:
         self._last_tick = now
         dt = min(dt, MAX_FRAME_DELTA_S)
 
-        # ── Симуляция ──
-        self._adjust_sim_time(dt)
         self._do_simulation(dt)
-        self._particles.step(self.position, self.sim_time)
+        self._particles.step(self.position.astype(np.float32), self.sim.sim_time)
 
-
-        # ── Визуалы ──
-        self._move_balloon_to()
+        self._sync_scene()
         self._follow_camera()
-        self._sync_target_line()
-        self._sync_hud()
-        self.plotter.renderer.ResetCameraClippingRange()
+        if emit_render:
+            self.plotter.render()
 
-    def _do_simulation(self, dt):
+    def _do_simulation(self, dt: float) -> None:
         state = self.sim.step(dt, self.air_pump_speed)
-
-        self.position = state.position
-        self.vertical_speed = state.vertical_speed
-        self.vertical_acceleration = state.vertical_acceleration
-        self.energy_spent = state.energy_spent
-        self.temperature = state.temperature
-        self.pressure = state.pressure
-        self.wind = state.wind
-    # ──────────────────── Физика ────────────────────
-
-    def _adjust_sim_time(self, dt: float) -> None:
-        """Продвинуть время симуляции для запросов к временным слоям ветра."""
-        self.sim_time += np.timedelta64(int(dt * 1000), "ms")
-
-    # ──────────────────── Запуск ────────────────────
+        self._apply_snapshot(state)
 
     def run(self) -> None:
-        """Открыть окно и запустить главный цикл PyVista."""
+        self._register_interactor_observers()
+        self._reset_camera_local()
         self.plotter.show()

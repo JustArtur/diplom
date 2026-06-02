@@ -29,6 +29,7 @@ class WindParticles:
         self._wind_interpolator = wind_interpolator
         self._time = time
         self._center = np.array(center, dtype=np.float32)
+        self._display_origin = np.asarray(center, dtype=np.float64)
 
         # Предвычисленный массив связности линий для VTK PolyData, формат lines [2, head_index, tail_index]
         # head_index, tail_index - индексы из массива pts
@@ -95,6 +96,7 @@ class WindParticles:
         """Продвинуть частицы по ветру, респавнить вышедшие, обновить меш."""
         self._time = time
         center = np.array(center, dtype=np.float32)
+        self._display_origin = np.asarray(center, dtype=np.float64)
         shift = center - self._center
         if np.any(shift):
             # Переносим всё "облако" частиц за аэростатом
@@ -140,17 +142,19 @@ class WindParticles:
         self.mesh["speed"] = speed
         self.mesh.Modified()
 
+    def _positions_for_display(self) -> np.ndarray:
+        """Мировые координаты → сцена (origin в позиции аэростата)."""
+        return self.position.astype(np.float64) - self._display_origin
+
     def _streak_data(self) -> tuple[np.ndarray, np.ndarray]:
         """Вычислить пары точек [голова, хвост] и скаляры скорости ветра."""
         wx, wy, wz = self._last_wind
+        pos = self._positions_for_display()
         pts = np.empty((2 * self.n_total, 3))
-        # Чётные индексы — голова (текущая позиция)
-
-        pts[0::2] = self.position
-        # Нечётные — хвост (позиция − вектор ветра × длину штриха)
-        pts[1::2, 0] = self.position[:, 0] - wx * STREAK_LENGTH
-        pts[1::2, 1] = self.position[:, 1] - wy * STREAK_LENGTH
-        pts[1::2, 2] = self.position[:, 2] - wz * STREAK_LENGTH
+        pts[0::2] = pos
+        pts[1::2, 0] = pos[:, 0] - wx * STREAK_LENGTH
+        pts[1::2, 1] = pos[:, 1] - wy * STREAK_LENGTH
+        pts[1::2, 2] = pos[:, 2] - wz * STREAK_LENGTH
         # |V| = √(u² + v² + w²)
         speed_per_particle = np.sqrt(wx ** 2 + wy ** 2 + wz ** 2)
         speed = np.repeat(speed_per_particle, 2)

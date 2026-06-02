@@ -41,10 +41,9 @@ class VisualizationRunner:
             config.visualization.sim_start_time,
             time_min=wind_interpolator.time_min,
         )
-        simulation_config = replace(
-            config.simulation,
-            balloon=replace(config.simulation.balloon, sim_time=sim_time),
-        )
+        # Те же старт/цель/время, что и в BalloonEnv (environment.balloon), а не пустой simulation.balloon.
+        balloon = replace(config.environment.balloon, sim_time=sim_time)
+        simulation_config = replace(config.simulation, balloon=balloon)
         simulation = create_simulation(simulation_config, wind_interpolator)
         plotter = self.build_plotter(config.visualization)
         hud = self.build_hud(plotter)

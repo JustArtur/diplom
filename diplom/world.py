@@ -11,7 +11,7 @@ from diplom.config import BalloonConfig
 from diplom.geo import meters_per_deg_lat, meters_per_deg_lon, pressure_hpa_to_altitude_m
 from diplom.shared_constants import MAX_HEIGHT, MIN_HEIGHT
 
-DEFAULT_TARGET_ALTITUDE = 5_000.0
+DEFAULT_TARGET_ALTITUDE = 15_000.0
 # Фиксированная стартовая высота аэростата (м AMSL): запуск «с земли».
 DEFAULT_START_ALTITUDE = 10.0
 

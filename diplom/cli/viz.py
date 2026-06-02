@@ -9,7 +9,13 @@ from typing import Optional
 import numpy as np
 import typer
 
-from diplom.cli.training_options import build_default_app_config, START_TIME_OPTION
+from diplom.cli.training_options import (
+    DATA_DIR_OPTION,
+    DATASET_OPTION,
+    MANIFEST_OPTION,
+    START_TIME_OPTION,
+    build_default_app_config,
+)
 from diplom.data.era5_paths import (
     ERA5_PREVIEW_DATA_DIR,
     list_era5_datasets,
@@ -19,11 +25,32 @@ from diplom.data.era5_paths import (
 
 def viz_real(
     start_time: Optional[datetime] = START_TIME_OPTION,
+    dataset: Optional[str] = DATASET_OPTION,
+    data_dir: Path = DATA_DIR_OPTION,
+    manifest_path: Path = MANIFEST_OPTION,
 ) -> None:
-    """Запуск PyVista-визуализации на реальном ветре."""
+    """Запуск PyVista-визуализации на реальном ветре.
+
+    Примеры:
+
+    \b
+      # Датасет по умолчанию (DEFAULT_ERA5_OUTFILE)
+      diplom viz-real
+
+    \b
+      # Конкретный датасет по имени, пути или id из манифеста
+      diplom viz-real --dataset era5_35_-5_50_110_2024-10-05_2024-10-19
+      diplom viz-real --dataset #1
+      diplom viz-real --dataset data/training/era5_....nc --start-time 2024-10-05T12:00:00
+    """
     from diplom.viz.pyvista.runner import VisualizationRunner
 
-    app_config = build_default_app_config(start_time=start_time)
+    app_config = build_default_app_config(
+        start_time=start_time,
+        dataset=dataset,
+        data_dir=data_dir,
+        manifest_path=manifest_path,
+    )
     VisualizationRunner().run_real(app_config)
 
 
