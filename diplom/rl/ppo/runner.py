@@ -27,6 +27,8 @@ from diplom.rl.callbacks.episode_stats import EpisodeStatsCallback
 from diplom.rl.callbacks.info_logging import InfoLoggingCallback
 from diplom.rl.ppo.models import get_model_spec
 from diplom.rl.ppo.policy import build_ppo_policy_kwargs
+from diplom.rl.pretraining import pretrain_policy_on_demo_dataset
+from diplom.trajectory.steps_io import cleanup_steps_dir
 from diplom.world import log_world_bounds
 from diplom.wind.factory import build_wind_interpolator
 from diplom.wind.interp import ensure_wind_interpolator_cache
@@ -243,6 +245,11 @@ def train_ppo(
     enable_trajectory_viz: bool = True,
     open_trajectory_viz: bool = False,
     resume: bool = False,
+    demo_dataset_path: Path | None = None,
+    demo_pretrain_epochs: int = 0,
+    demo_pretrain_batch_size: int = 256,
+    demo_pretrain_learning_rate: float | None = None,
+    demo_pretrain_max_grad_norm: float | None = None,
 ) -> Path:
     """Train PPO agent on the balloon environment.
 
@@ -289,6 +296,7 @@ def train_ppo(
     trajectory_steps_dir = traj_dir if enable_trajectory_viz else None
     if enable_trajectory_viz:
         print(f"[train_ppo] Trajectory viz: {traj_dir.resolve()}")  # noqa: T201
+        cleanup_steps_dir(traj_dir)
     else:
         print("[train_ppo] Trajectory viz: off (--no-trajectories)")  # noqa: T201
     vec_env = _make_vec_env(
@@ -382,6 +390,23 @@ def train_ppo(
                 tensorboard_log=str(run_dir),
                 seed=config.training.seed,
                 device=device,
+            )
+        if demo_dataset_path is not None and demo_pretrain_epochs > 0:
+            print(f"[train_ppo] Demo dataset: {demo_dataset_path}")  # noqa: T201
+            pretrain_summary = pretrain_policy_on_demo_dataset(
+                model,
+                demo_dataset_path,
+                epochs=demo_pretrain_epochs,
+                batch_size=demo_pretrain_batch_size,
+                learning_rate=demo_pretrain_learning_rate,
+                max_grad_norm=demo_pretrain_max_grad_norm,
+            )
+            print(  # noqa: T201
+                "[train_ppo] Demo pretraining: "
+                f"samples={pretrain_summary.sample_count} "
+                f"epochs={pretrain_summary.epochs} "
+                f"batch_size={pretrain_summary.batch_size} "
+                f"avg_loss={pretrain_summary.average_loss:.6f}"
             )
         model.verbose = ppo_verbose
         extra_callbacks = list(callbacks) if callbacks is not None else []

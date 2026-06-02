@@ -23,7 +23,11 @@ from diplom.data.era5_paths import (
     resolve_dataset_reference,
 )
 from diplom.config import DEFAULT_WINDOW_SIZE
-from diplom.envs.constants import TARGET_REACH_RADIUS
+from diplom.envs.constants import (
+    TARGET_REACH_RADIUS,
+    TRAIN_TARGET_POSITION_HORIZONTAL_DELTA,
+    TRAIN_TARGET_POSITION_VERTICAL_DELTA,
+)
 from diplom.envs.rewards import get_reward_fn, list_reward_names
 from diplom.envs.observations import get_obs_spec, list_obs_names
 from diplom.rl.ppo.models import get_model_spec, list_model_specs
@@ -73,10 +77,31 @@ TARGET_RADIUS_OPTION = typer.Option(
     "--target-radius",
     help="Радиус вокруг цели, при попадании в который эпизод считается успешным",
 )
-RANDOMIZE_POSITION_OPTION = typer.Option(
+RANDOMIZE_INITIAL_POSITION_OPTION = typer.Option(
     False,
-    "--randomize-position/--no-randomize-position",
-    help="Случайное смещение стартовой позиции и цели вокруг базовых координат",
+    "--randomize-initial-position/--no-randomize-initial-position",
+    help="Случайное смещение стартовой позиции аэростата вокруг базовых координат",
+)
+RANDOMIZE_TARGET_POSITION_OPTION = typer.Option(
+    False,
+    "--randomize-target-position/--no-randomize-target-position",
+    help=(
+        "Случайное смещение целевой позиции вокруг базовых координат; "
+        "если заданы нестандартные --randomize-target-horizontal-delta/--randomize-target-vertical-delta, "
+        "флаг включится автоматически"
+    ),
+)
+RANDOMIZE_TARGET_HORIZONTAL_DELTA_OPTION = typer.Option(
+    TRAIN_TARGET_POSITION_HORIZONTAL_DELTA,
+    "--randomize-target-horizontal-delta",
+    min=0.0,
+    help="Разброс целевой позиции по оси X (м)",
+)
+RANDOMIZE_TARGET_VERTICAL_DELTA_OPTION = typer.Option(
+    TRAIN_TARGET_POSITION_VERTICAL_DELTA,
+    "--randomize-target-vertical-delta",
+    min=0.0,
+    help="Разброс целевой позиции по вертикали (м)",
 )
 DATASET_OPTION = typer.Option(
     None,
@@ -166,7 +191,10 @@ class PpoTrainingCliOptions:
     verbose: int
     target_reach_radius: float
     start_time: datetime | None
-    randomize_position: bool
+    randomize_initial_position: bool
+    randomize_target_position: bool
+    target_horizontal_delta: float
+    target_vertical_delta: float
     dataset: str | None
     data_dir: Path
     experiment_name: str | None
@@ -211,6 +239,14 @@ def _visualization_config(start_time: datetime | None = None) -> VisualizationCo
     return viz
 
 
+def _should_randomize_target_position(options: PpoTrainingCliOptions) -> bool:
+    return bool(
+        options.randomize_target_position
+        or options.target_horizontal_delta != TRAIN_TARGET_POSITION_HORIZONTAL_DELTA
+        or options.target_vertical_delta != TRAIN_TARGET_POSITION_VERTICAL_DELTA
+    )
+
+
 def build_ppo_app_config(options: PpoTrainingCliOptions) -> AppConfig:
     get_model_spec(options.model_name)
     get_reward_fn(options.reward_name)
@@ -240,7 +276,10 @@ def build_ppo_app_config(options: PpoTrainingCliOptions) -> AppConfig:
         environment=EnvironmentConfig(
             balloon=_balloon_config(options.start_time),
             target_reach_radius=options.target_reach_radius,
-            randomize_start_state=options.randomize_position,
+            randomize_initial_position=options.randomize_initial_position,
+            randomize_target_position=_should_randomize_target_position(options),
+            train_target_position_horizontal_delta=options.target_horizontal_delta,
+            train_target_position_vertical_delta=options.target_vertical_delta,
             reward_name=options.reward_name,
             obs_name=options.obs_name,
         ),
@@ -264,13 +303,7 @@ def balloon_config(start_time: datetime | None = None) -> BalloonConfig:
     return _balloon_config(start_time)
 
 
-def build_default_app_config(
-    *,
-    start_time: datetime | None = None,
-    dataset: str | None = None,
-    data_dir: Path = ERA5_TRAINING_DATA_DIR,
-    manifest_path: Path = ERA5_TRAINING_MANIFEST_PATH,
-) -> AppConfig:
+def build_default_app_config(*, start_time: datetime | None = None) -> AppConfig:
     """Минимальный AppConfig для viz/rollout без параметров обучения."""
     return build_ppo_app_config(
         ppo_training_options(
@@ -282,10 +315,12 @@ def build_default_app_config(
             verbose=DEFAULT_VERBOSE,
             target_reach_radius=DEFAULT_TARGET_REACH_RADIUS,
             start_time=start_time,
-            randomize_position=False,
-            dataset=dataset,
-            data_dir=data_dir,
-            manifest_path=manifest_path,
+            randomize_initial_position=False,
+            randomize_target_position=False,
+            target_horizontal_delta=TRAIN_TARGET_POSITION_HORIZONTAL_DELTA,
+            target_vertical_delta=TRAIN_TARGET_POSITION_VERTICAL_DELTA,
+            dataset=None,
+            data_dir=ERA5_TRAINING_DATA_DIR,
         )
     )
 
@@ -300,7 +335,10 @@ def ppo_training_options(
     verbose: int,
     target_reach_radius: float,
     start_time: Optional[datetime],
-    randomize_position: bool,
+    randomize_initial_position: bool,
+    randomize_target_position: bool,
+    target_horizontal_delta: float,
+    target_vertical_delta: float,
     dataset: Optional[str],
     data_dir: Path,
     experiment_name: Optional[str] = None,
@@ -318,7 +356,10 @@ def ppo_training_options(
         verbose=verbose,
         target_reach_radius=target_reach_radius,
         start_time=start_time,
-        randomize_position=randomize_position,
+        randomize_initial_position=randomize_initial_position,
+        randomize_target_position=randomize_target_position,
+        target_horizontal_delta=target_horizontal_delta,
+        target_vertical_delta=target_vertical_delta,
         dataset=dataset,
         data_dir=data_dir,
         experiment_name=experiment_name.strip() if experiment_name else None,

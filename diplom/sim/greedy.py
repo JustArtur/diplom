@@ -30,10 +30,13 @@ class GreedyActionChoice:
 class GreedyRunConfig:
     """Единственный источник дефолтов greedy baseline (CLI и choose_greedy_action)."""
 
-    lookahead_steps: int = 10
+    lookahead_steps: int = 60
     candidate_count: int = 10
     vertical_weight: float = 20.0
     trajectory_render_interval: int = 256
+
+
+DEFAULT_GREEDY_RUN_CONFIG = GreedyRunConfig()
 
 
 def _candidate_actions(action_limit: float, candidate_count: int) -> np.ndarray:
@@ -102,7 +105,7 @@ def choose_greedy_action(
     target_reach_radius: float,
     greedy: GreedyRunConfig | None = None,
 ) -> GreedyActionChoice:
-    cfg = greedy or GreedyRunConfig()
+    cfg = greedy or DEFAULT_GREEDY_RUN_CONFIG
     actions = _candidate_actions(action_limit, cfg.candidate_count)
     evaluations = [
         _evaluate_action(
@@ -207,8 +210,8 @@ def greedy_episodes(
     seed: int = 0,
     open_trajectory_viz: bool = False,
 ) -> List[EpisodeResult]:
-    greedy_cfg = greedy or GreedyRunConfig()
-    env_config = replace(config.environment, randomize_start_state=False)
+    greedy_cfg = greedy or DEFAULT_GREEDY_RUN_CONFIG
+    env_config = config.environment
     env = build_env(env_config, config.wind, env_idx=0)
     log_world_bounds(
         env.world_bounds,

@@ -84,6 +84,11 @@ class EnvStepsWriter:
         self._handle.write("\n")
         self.step_count += 1
 
+    def flush(self) -> None:
+        """Сбросить буфер JSONL на диск перед чтением снапшотом live-рендера."""
+        if self._handle is not None:
+            self._handle.flush()
+
     def finalize_episode(self, episode_num: int) -> Path:
         if self._handle is not None:
             self._handle.close()

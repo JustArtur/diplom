@@ -489,11 +489,12 @@ def _write_live_html_shell(
         .replace("__STORAGE_KEY__", json.dumps(path.stem))
     )
     html_text = path.read_text(encoding="utf-8") if path.exists() else ""
-    if (
+    needs_rewrite = (
         not path.exists()
         or f"{LIVE_DATA_SUBDIR}/" not in html_text
-        or (has_wind_layer and "WIND_JS" not in html_text)
-    ):
+        or (has_wind_layer and ("const WIND_JS = null;" in html_text or "WIND_JS" not in html_text))
+    )
+    if needs_rewrite:
         path.write_text(html, encoding="utf-8")
 
 

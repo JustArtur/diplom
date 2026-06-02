@@ -24,6 +24,20 @@ from diplom.trajectory.steps_io import (
 from diplom.wind.interp import WindInterpolator
 
 
+class _StepInfoDict(dict[str, Any]):
+    """Лёгкий dict для `info`, который не рекурсивно deep-copy'ится SB3.
+
+    `DummyVecEnv` делает `copy.deepcopy(info)` на каждом шаге. У нас в `info`
+    только скаляры и редкие вложенные dict'ы без разделяемого состояния, поэтому
+    достаточно поверхностной копии. Это сохраняет контракт `dict`, но убирает
+    дорогой рекурсивный проход по тысячам однотипных скаляров.
+    """
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "_StepInfoDict":
+        del memo
+        return _StepInfoDict(self)
+
+
 class BalloonEnv(gym.Env):
     """Gymnasium-среда управления стратостатом.
 
@@ -55,9 +69,11 @@ class BalloonEnv(gym.Env):
         self._obs_needs_probe_winds = config.obs_name == "default"
         self._reward_needs_probe_winds = bool(getattr(self._reward_module, "NEEDS_PROBE_WINDS", False))
         self.normalize_observations = bool(config.normalize_observations)
-        self.randomize_start_state = config.randomize_start_state
+        self.randomize_initial_position = config.randomize_initial_position
+        self.randomize_target_position = config.randomize_target_position
         self.train_initial_position_delta = np.array(config.train_initial_position_delta, dtype=np.float32)
-        self.train_target_position_delta = np.array(config.train_target_position_delta, dtype=np.float32)
+        self.train_target_position_horizontal_delta = float(config.train_target_position_horizontal_delta)
+        self.train_target_position_vertical_delta = float(config.train_target_position_vertical_delta)
         self.action_limit = np.float32(config.action_limit)
         self.target_reach_radius = np.float32(config.target_reach_radius)
         self.target_vertical_reach_radius = np.float32(TARGET_VERTICAL_REACH_RADIUS)
@@ -72,6 +88,7 @@ class BalloonEnv(gym.Env):
 
         self._trajectory_max_history = max(1, int(config.trajectory_max_history))
         self._steps_writer: EnvStepsWriter | None = None
+        self._record_step_observation = bool(config.trajectory_record_observation)
         self._episode_count = 0
         self._episode_history: list[EpisodeFileRef] = []
         if config.trajectory_steps_dir is not None:
@@ -137,6 +154,10 @@ class BalloonEnv(gym.Env):
 
     def step(self, action):
         clipped_action = self._clip_action(action)
+        pre_step_observation: np.ndarray | None = None
+        if self._steps_writer is not None and self._record_step_observation:
+            pre_step_snapshot = self.sim.snapshot()
+            pre_step_observation = self.to_obs(pre_step_snapshot, previous_position=None)
         previous_position = np.array(self.sim.position, dtype=np.float32)
         previous_energy = float(self.sim.energy_spent)
 
@@ -188,6 +209,7 @@ class BalloonEnv(gym.Env):
         step_record_kwargs = {
             "result": result,
             "clipped_action": clipped_action,
+            "observation": pre_step_observation,
             "progress_reward": progress_reward,
             "horizontal_progress": horizontal_progress,
             "vertical_progress": vertical_progress,
@@ -228,7 +250,7 @@ class BalloonEnv(gym.Env):
         else:
             self._pending_step = None
             self._pending_step_build = step_record_kwargs
-        info = {
+        info = _StepInfoDict({
             "progress_reward": float(progress_reward),
             "horizontal_progress": float(horizontal_progress),
             "distance_to_target": float(current_distance),
@@ -240,7 +262,7 @@ class BalloonEnv(gym.Env):
             "consecutive_adverse_wind": float(reward_result.consecutive_adverse_wind),
             "terminated": bool(terminated),
             "truncated": bool(truncated),
-        }
+        })
 
         return self.to_obs(result, previous_position=previous_position, probe_winds=probe_winds), float(reward), terminated, truncated, info
 
@@ -314,6 +336,7 @@ class BalloonEnv(gym.Env):
         """Метаданные траекторий для снапшота рендера (один вызов за rollout)."""
         if self._steps_writer is None:
             return {}
+        self._steps_writer.flush()
         env_idx = self.env_idx if self.env_idx is not None else 0
         return {
             "env_idx": env_idx,
@@ -339,6 +362,8 @@ class BalloonEnv(gym.Env):
         terminated = bool(last_record.get("terminated", False))
         outcome = "успех" if terminated else "truncated"
         step_count = self._steps_writer.step_count
+        first_step = self._steps_writer.first_step
+        last_step = self._steps_writer.last_step
         steps_path = self._steps_writer.finalize_episode(ep_num)
         target = tuple(float(v) for v in last_record.get("target_position", [0.0, 0.0, 0.0]))
         env_idx = self.env_idx if self.env_idx is not None else 0
@@ -350,6 +375,8 @@ class BalloonEnv(gym.Env):
                 env_idx=env_idx,
                 episode_num=ep_num,
                 step_count=step_count,
+                first_step=first_step,
+                last_step=last_step,
             )
             steps_path.unlink(missing_ok=True)
             steps_path = archived_path
@@ -370,6 +397,7 @@ class BalloonEnv(gym.Env):
         *,
         result: SimResult,
         clipped_action: float,
+        observation: np.ndarray | None,
         progress_reward: float,
         horizontal_progress: float,
         vertical_progress: float,
@@ -405,6 +433,11 @@ class BalloonEnv(gym.Env):
             "wind": [float(v) for v in result.wind],
             "target_position": [float(v) for v in result.target_position],
             "action": float(clipped_action),
+            **(
+                {"observation": [float(v) for v in observation.tolist()]}
+                if observation is not None
+                else {}
+            ),
             "reward": reward,
             "progress_reward": float(progress_reward),
             "horizontal_progress": float(horizontal_progress),
@@ -452,6 +485,9 @@ class BalloonEnv(gym.Env):
         wind = np.round(snapshot.wind, 2)
         return f"pos={position.tolist()} target={target_position.tolist()} wind={wind.tolist()}"
 
+    def set_max_episode_steps(self, max_episode_steps: int) -> None:
+        self.max_episode_steps = int(max_episode_steps)
+
     def _clip_action(self, action) -> float:
         value = float(np.asarray(action, dtype=np.float32).reshape(-1)[0])
         limit = float(self.action_limit)
@@ -472,12 +508,13 @@ class BalloonEnv(gym.Env):
         initial_position = self.base_balloon.initial_position
         target_position = self.base_balloon.target_position
 
-        if self.randomize_start_state:
+        if self.randomize_initial_position:
             # Для train-режима рандомизируем старт по X/Y; высота — всегда base_balloon.initial_position[2].
             initial_position = self._sample_initial_position(
                 self.base_balloon.initial_position,
                 self.train_initial_position_delta,
             )
+        if self.randomize_target_position:
             target_position = self._sample_target_position(initial_position)
 
         return BalloonConfig(
@@ -487,14 +524,24 @@ class BalloonEnv(gym.Env):
         )
 
     def _sample_target_position(self, initial_position: np.ndarray) -> np.ndarray:
-        """Сэмплирует целевую позицию с учётом train_target_position_delta и
-        гарантирует минимальное расстояние до стартовой точки."""
+        """Сэмплирует целевую позицию и гарантирует минимальное расстояние до стартовой точки."""
         min_distance = 3000.0
 
         while True:
-            candidate = self._sample_position(self.base_balloon.target_position, self.train_target_position_delta)
+            candidate = self._sample_target_position_candidate(self.base_balloon.target_position)
             if float(np.linalg.norm(candidate - initial_position)) >= min_distance:
                 return candidate
+
+    def _sample_target_position_candidate(self, center: np.ndarray) -> np.ndarray:
+        delta = np.array(
+            [
+                self.train_target_position_horizontal_delta,
+                0.0,
+                self.train_target_position_vertical_delta,
+            ],
+            dtype=np.float32,
+        )
+        return self._sample_position(center, delta)
 
 
     def _sample_initial_position(self, center: np.ndarray, delta: np.ndarray) -> np.ndarray:

@@ -13,7 +13,8 @@ from diplom.envs.constants import (
     TARGET_REACH_RADIUS,
     TRAIN_INITIAL_POSITION_DELTA,
     TRAIN_MAX_EPISODE_STEPS,
-    TRAIN_TARGET_POSITION_DELTA,
+    TRAIN_TARGET_POSITION_HORIZONTAL_DELTA,
+    TRAIN_TARGET_POSITION_VERTICAL_DELTA,
 )
 from diplom.sim.constants import DEFAULT_AIR_WEIGHT
 from diplom.data.era5_paths import (
@@ -125,16 +126,18 @@ class EnvironmentConfig:
     # Начальная масса воздуха в баллоне (кг); должна совпадать с SimulationConfig.initial_air_weight
     # при совместном использовании, чтобы поведение RL-среды и визуализации было идентичным.
     initial_air_weight: float = DEFAULT_AIR_WEIGHT
-    # Включать ли рандомизацию стартовой позиции и цели в train-режиме.
-    randomize_start_state: bool = False
+    # Включать ли рандомизацию стартовой позиции аэростата в train-режиме.
+    randomize_initial_position: bool = False
+    # Включать ли рандомизацию целевой позиции в train-режиме.
+    randomize_target_position: bool = False
     # Амплитуда случайного смещения стартовой позиции для train-эпизодов.
     train_initial_position_delta: np.ndarray = field(
         default_factory=lambda: TRAIN_INITIAL_POSITION_DELTA.copy()
     )
-    # Амплитуда случайного смещения целевой позиции для train-эпизодов.
-    train_target_position_delta: np.ndarray = field(
-        default_factory=lambda: TRAIN_TARGET_POSITION_DELTA.copy()
-    )
+    # Амплитуда случайного смещения целевой позиции по X для train-эпизодов.
+    train_target_position_horizontal_delta: float = TRAIN_TARGET_POSITION_HORIZONTAL_DELTA
+    # Амплитуда случайного смещения целевой позиции по высоте для train-эпизодов.
+    train_target_position_vertical_delta: float = TRAIN_TARGET_POSITION_VERTICAL_DELTA
     # Ограничение на модуль управляющего воздействия.
     action_limit: float = ACTION_LIMIT
     # Радиус вокруг цели, при попадании в который эпизод считается завершённым успешно.
@@ -147,6 +150,9 @@ class EnvironmentConfig:
     normalize_observations: bool = True
     # Каталог JSONL-шагов для HTML-траекторий; None — не писать шаги на диск.
     trajectory_steps_dir: Path | None = None
+    # Сохранять ли observation, из которого был выбран action.
+    # Нужен для демонстраций и pretraining, но для обычного train обычно не требуется.
+    trajectory_record_observation: bool = False
     # Сколько завершённых эпизодов держать в истории HTML-визуализации (старые неуспешные удаляются).
     # Успешные эпизоды всегда копируются в trajectories/_success/ и с диска не удаляются.
     trajectory_max_history: int = 3
@@ -187,9 +193,9 @@ EpisodeLengthCurriculumStageInput: TypeAlias = (
 
 
 DEFAULT_EPISODE_LENGTH_CURRICULUM_STAGES: tuple[EpisodeLengthCurriculumStage, ...] = (
-    EpisodeLengthCurriculumStage(0, 4_000_000, 400_000),
-    EpisodeLengthCurriculumStage(4_000_000, 10_000_000, 700_000),
-    EpisodeLengthCurriculumStage(10_000_000, None, 1_250_000),
+    EpisodeLengthCurriculumStage(0, 3_000_000, 100_000),
+    # EpisodeLengthCurriculumStage(3_000_000, 8_000_000, 800_000),
+    # EpisodeLengthCurriculumStage(8_000_000, None, 1_250_000),
 )
 
 

@@ -20,8 +20,10 @@ def main() -> None:
 
 def _register_commands() -> None:
     from diplom.cli.download import download
-    from diplom.cli.greedy import greedy
+    from diplom.cli.demos import export_demonstrations
     from diplom.cli.profile import profile_ppo_cpu, profile_ppo_mem
+    from diplom.cli.greedy import greedy
+    from diplom.cli.manual import manual_rollout
     from diplom.cli.rollout import rollout
     from diplom.cli.tensorboard import export_tensorboard
     from diplom.cli.train import train_parallel_ppo, train_ppo
@@ -29,6 +31,8 @@ def _register_commands() -> None:
 
     app.command()(download)
     app.command()(viz_real)
+    app.command("manual-rollout")(manual_rollout)
+    app.command("export-demonstrations")(export_demonstrations)
     app.command("train-ppo")(train_ppo)
     app.command(
         "train-parallel-ppo",
@@ -38,7 +42,7 @@ def _register_commands() -> None:
     app.command("profile-ppo-mem")(profile_ppo_mem)
     app.command("profile-ppo-cpu")(profile_ppo_cpu)
     app.command("rollout")(rollout)
-    app.command()(greedy)
+    app.command("greedy")(greedy)
     app.command("wind-viz")(wind_viz)
 
 

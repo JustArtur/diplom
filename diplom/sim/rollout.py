@@ -28,7 +28,11 @@ def rollout_episodes(
     render: bool = False,
     seed: int = 0,
 ) -> List[EpisodeResult]:
-    env_config = replace(config.environment, randomize_start_state=False)
+    env_config = replace(
+        config.environment,
+        randomize_initial_position=False,
+        randomize_target_position=False,
+    )
     env = build_env(env_config, config.wind, env_idx=0)
     log_world_bounds(
         env.world_bounds,

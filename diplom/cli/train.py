@@ -15,7 +15,10 @@ from diplom.cli.training_options import (
     MANIFEST_OPTION,
     MODEL_OPTION,
     OBS_OPTION,
-    RANDOMIZE_POSITION_OPTION,
+    RANDOMIZE_INITIAL_POSITION_OPTION,
+    RANDOMIZE_TARGET_POSITION_OPTION,
+    RANDOMIZE_TARGET_HORIZONTAL_DELTA_OPTION,
+    RANDOMIZE_TARGET_VERTICAL_DELTA_OPTION,
     REWARD_OPTION,
     SEED_OPTION,
     START_TIME_OPTION,
@@ -37,7 +40,10 @@ def train_ppo(
     device: str = DEVICE_OPTION,
     target_reach_radius: float = TARGET_RADIUS_OPTION,
     start_time: Optional[datetime] = START_TIME_OPTION,
-    randomize_position: bool = RANDOMIZE_POSITION_OPTION,
+    randomize_initial_position: bool = RANDOMIZE_INITIAL_POSITION_OPTION,
+    randomize_target_position: bool = RANDOMIZE_TARGET_POSITION_OPTION,
+    target_horizontal_delta: float = RANDOMIZE_TARGET_HORIZONTAL_DELTA_OPTION,
+    target_vertical_delta: float = RANDOMIZE_TARGET_VERTICAL_DELTA_OPTION,
     in_process: bool = typer.Option(
         False,
         "--in-process",
@@ -82,6 +88,35 @@ def train_ppo(
     model: str = MODEL_OPTION,
     reward: str = REWARD_OPTION,
     obs: str = OBS_OPTION,
+    demo_dataset: Path | None = typer.Option(
+        None,
+        "--demo-dataset",
+        help="NPZ с демонстрациями для предварительного обучения policy перед PPO",
+    ),
+    demo_pretrain_epochs: int = typer.Option(
+        0,
+        "--demo-pretrain-epochs",
+        min=0,
+        help="Сколько эпох BC/pretraining сделать перед PPO (0 — пропустить)",
+    ),
+    demo_pretrain_batch_size: int = typer.Option(
+        256,
+        "--demo-pretrain-batch-size",
+        min=1,
+        help="Batch size для BC/pretraining по демонстрациям",
+    ),
+    demo_pretrain_learning_rate: float | None = typer.Option(
+        None,
+        "--demo-pretrain-lr",
+        min=0.0,
+        help="Learning rate для BC/pretraining; по умолчанию используется PPO lr",
+    ),
+    demo_pretrain_max_grad_norm: float | None = typer.Option(
+        None,
+        "--demo-pretrain-max-grad-norm",
+        min=0.0,
+        help="Ограничение нормы градиента во время BC/pretraining",
+    ),
 ) -> None:
     """Запустить обучение PPO-модели."""
     from diplom.dev.profiling.runner import PROFILE_N_ENVS
@@ -103,7 +138,10 @@ def train_ppo(
         verbose=verbose,
         target_reach_radius=target_reach_radius,
         start_time=start_time,
-        randomize_position=randomize_position,
+        randomize_initial_position=randomize_initial_position,
+        randomize_target_position=randomize_target_position,
+        target_horizontal_delta=target_horizontal_delta,
+        target_vertical_delta=target_vertical_delta,
         dataset=dataset,
         data_dir=data_dir,
         experiment_name=experiment,
@@ -136,6 +174,11 @@ def train_ppo(
             enable_trajectory_viz=trajectories,
             open_trajectory_viz=open_trajectories,
             resume=resume,
+            demo_dataset_path=demo_dataset,
+            demo_pretrain_epochs=demo_pretrain_epochs,
+            demo_pretrain_batch_size=demo_pretrain_batch_size,
+            demo_pretrain_learning_rate=demo_pretrain_learning_rate,
+            demo_pretrain_max_grad_norm=demo_pretrain_max_grad_norm,
         )
     except ValueError as exc:
         typer.echo(str(exc), err=True)

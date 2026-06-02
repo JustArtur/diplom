@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -10,10 +11,18 @@ from diplom.cli.training_options import (
     DATA_DIR_OPTION,
     DATASET_OPTION,
     DEVICE_OPTION,
+    EXPERIMENT_OPTION,
+    MANIFEST_OPTION,
+    MODEL_OPTION,
+    OBS_OPTION,
     PROFILE_ENVS_OPTION,
     PROFILE_MAIN_OPTION,
     PROFILE_TRAJECTORY_OPTION,
-    RANDOMIZE_POSITION_OPTION,
+    RANDOMIZE_INITIAL_POSITION_OPTION,
+    RANDOMIZE_TARGET_POSITION_OPTION,
+    RANDOMIZE_TARGET_HORIZONTAL_DELTA_OPTION,
+    RANDOMIZE_TARGET_VERTICAL_DELTA_OPTION,
+    REWARD_OPTION,
     SEED_OPTION,
     START_TIME_OPTION,
     TARGET_RADIUS_OPTION,
@@ -60,7 +69,10 @@ def profile_ppo_mem(
     verbose: int = VERBOSE_OPTION,
     target_reach_radius: float = TARGET_RADIUS_OPTION,
     start_time: Optional[datetime] = START_TIME_OPTION,
-    randomize_position: bool = RANDOMIZE_POSITION_OPTION,
+    randomize_initial_position: bool = RANDOMIZE_INITIAL_POSITION_OPTION,
+    randomize_target_position: bool = RANDOMIZE_TARGET_POSITION_OPTION,
+    target_horizontal_delta: float = RANDOMIZE_TARGET_HORIZONTAL_DELTA_OPTION,
+    target_vertical_delta: float = RANDOMIZE_TARGET_VERTICAL_DELTA_OPTION,
     n_envs: int = n_envs_option(profile=True),
     single_process: bool = typer.Option(
         False,
@@ -70,8 +82,26 @@ def profile_ppo_mem(
     profile_main: bool = PROFILE_MAIN_OPTION,
     profile_envs: bool = PROFILE_ENVS_OPTION,
     profile_trajectory: bool = PROFILE_TRAJECTORY_OPTION,
+    trajectory_wind_cones: bool = typer.Option(
+        False,
+        "--trajectory-wind-cones/--no-trajectory-wind-cones",
+        help="Конусы ветра на HTML-графике траекторий",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help=(
+            "Продолжить из {logdir}/{experiment|датасет}/PPO_N/ppo_model.zip: "
+            "тот же run, счётчик шагов и TensorBoard без сброса"
+        ),
+    ),
     dataset: Optional[str] = DATASET_OPTION,
     data_dir: Path = DATA_DIR_OPTION,
+    experiment: Optional[str] = EXPERIMENT_OPTION,
+    manifest_path: Path = MANIFEST_OPTION,
+    model: str = MODEL_OPTION,
+    reward: str = REWARD_OPTION,
+    obs: str = OBS_OPTION,
 ) -> None:
     """Профиль памяти при обучении PPO (memray).
 
@@ -107,11 +137,27 @@ def profile_ppo_mem(
             verbose=verbose,
             target_reach_radius=target_reach_radius,
             start_time=start_time,
-            randomize_position=randomize_position,
+            randomize_initial_position=randomize_initial_position,
+            randomize_target_position=randomize_target_position,
+            target_horizontal_delta=target_horizontal_delta,
+            target_vertical_delta=target_vertical_delta,
             dataset=dataset,
             data_dir=data_dir,
+            experiment_name=experiment,
+            manifest_path=manifest_path,
+            model_name=model,
+            reward_name=reward,
+            obs_name=obs,
         )
     )
+    if trajectory_wind_cones:
+        app_config = replace(
+            app_config,
+            environment=replace(
+                app_config.environment,
+                trajectory_show_wind_cones=True,
+            ),
+        )
     try:
         run_dir, reports = run_memray_train(
             app_config,
@@ -122,6 +168,7 @@ def profile_ppo_mem(
             print_table=not no_table,
             multiprocess=not single_process,
             profile_targets=profile_targets,
+            resume=resume,
         )
     except MemrayNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -152,7 +199,10 @@ def profile_ppo_cpu(
     verbose: int = VERBOSE_OPTION,
     target_reach_radius: float = TARGET_RADIUS_OPTION,
     start_time: Optional[datetime] = START_TIME_OPTION,
-    randomize_position: bool = RANDOMIZE_POSITION_OPTION,
+    randomize_initial_position: bool = RANDOMIZE_INITIAL_POSITION_OPTION,
+    randomize_target_position: bool = RANDOMIZE_TARGET_POSITION_OPTION,
+    target_horizontal_delta: float = RANDOMIZE_TARGET_HORIZONTAL_DELTA_OPTION,
+    target_vertical_delta: float = RANDOMIZE_TARGET_VERTICAL_DELTA_OPTION,
     n_envs: int = n_envs_option(profile=True),
     single_process: bool = typer.Option(
         False,
@@ -162,6 +212,19 @@ def profile_ppo_cpu(
     profile_main: bool = PROFILE_MAIN_OPTION,
     profile_envs: bool = PROFILE_ENVS_OPTION,
     profile_trajectory: bool = PROFILE_TRAJECTORY_OPTION,
+    trajectory_wind_cones: bool = typer.Option(
+        False,
+        "--trajectory-wind-cones/--no-trajectory-wind-cones",
+        help="Конусы ветра на HTML-графике траекторий",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help=(
+            "Продолжить из {logdir}/{experiment|датасет}/PPO_N/ppo_model.zip: "
+            "тот же run, счётчик шагов и TensorBoard без сброса"
+        ),
+    ),
     no_stats: bool = typer.Option(
         False,
         "--no-stats",
@@ -169,6 +232,11 @@ def profile_ppo_cpu(
     ),
     dataset: Optional[str] = DATASET_OPTION,
     data_dir: Path = DATA_DIR_OPTION,
+    experiment: Optional[str] = EXPERIMENT_OPTION,
+    manifest_path: Path = MANIFEST_OPTION,
+    model: str = MODEL_OPTION,
+    reward: str = REWARD_OPTION,
+    obs: str = OBS_OPTION,
 ) -> None:
     """Профиль CPU (cProfile) при обучении PPO.
 
@@ -201,11 +269,27 @@ def profile_ppo_cpu(
             verbose=verbose,
             target_reach_radius=target_reach_radius,
             start_time=start_time,
-            randomize_position=randomize_position,
+            randomize_initial_position=randomize_initial_position,
+            randomize_target_position=randomize_target_position,
+            target_horizontal_delta=target_horizontal_delta,
+            target_vertical_delta=target_vertical_delta,
             dataset=dataset,
             data_dir=data_dir,
+            experiment_name=experiment,
+            manifest_path=manifest_path,
+            model_name=model,
+            reward_name=reward,
+            obs_name=obs,
         )
     )
+    if trajectory_wind_cones:
+        app_config = replace(
+            app_config,
+            environment=replace(
+                app_config.environment,
+                trajectory_show_wind_cones=True,
+            ),
+        )
     try:
         run_dir, reports = run_cprofile_train(
             app_config,
@@ -214,6 +298,7 @@ def profile_ppo_cpu(
             multiprocess=not single_process,
             profile_targets=profile_targets,
             print_stats=not no_stats,
+            resume=resume,
         )
     except ValueError as exc:
         typer.echo(str(exc), err=True)
