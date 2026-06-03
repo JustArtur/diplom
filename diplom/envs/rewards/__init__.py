@@ -1,7 +1,3 @@
-# Реестр reward-функций. Выбор: --reward при train-ppo или rollout.
-#
-# Модули: simple, pbrs, long_horizon, goal_only, no_regression, no_z_stick, weak_z_stick.
-
 from __future__ import annotations
 
 from importlib import import_module

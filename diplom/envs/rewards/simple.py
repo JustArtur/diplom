@@ -1,5 +1,3 @@
-# Reward simple: базовая навигация без лишних штрафов.
-
 from __future__ import annotations
 
 import numpy as np

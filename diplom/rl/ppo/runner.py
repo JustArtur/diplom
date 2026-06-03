@@ -39,11 +39,8 @@ def _env_factory(
     wind_config: WindConfig,
     env_idx: int | None = None,
 ) -> BalloonEnv:
-    # Создаёт одну среду внутри рабочего подпроцесса.
-    #
-    # Функция должна быть определена на уровне модуля (не lambda и не closure),
-    # чтобы pickle мог сериализовать её при передаче в SubprocVecEnv.
-    #
+    # Создаёт одну среду внутри рабочего подпроцесса
+    # Функция должна быть определена на уровне модуля (не lambda и не closure)
     from diplom.dev.profiling.cpu import start_process_cprofile_if_enabled
     from diplom.dev.profiling.memory import env_process_name, start_process_memray_if_enabled
 
@@ -97,7 +94,6 @@ def _make_vec_env(
 
 
 def training_run_dir_name(index: int) -> str:
-    # Имя подкаталога run-а: PPO_{index}.
     return f"PPO_{index}"
 
 
@@ -118,7 +114,6 @@ def _resolve_run_and_model(
     *,
     resume: bool,
 ) -> tuple[Path, Path, bool]:
-    # Вернуть (run_dir, model_path, continuing).
     parent_logdir.mkdir(parents=True, exist_ok=True)
     experiment_dir = _experiment_logdir(parent_logdir, run_prefix)
     legacy_model = experiment_dir / "ppo_model.zip"
@@ -144,7 +139,6 @@ def training_run_dir(
     *,
     reuse_latest: bool = False,
 ) -> Path:
-    # Каталог run-а: {parent}/{run_prefix}/PPO_N (всё внутри, включая модель).
     parent_logdir.mkdir(parents=True, exist_ok=True)
     experiment_dir = _experiment_logdir(parent_logdir, run_prefix)
 
@@ -168,7 +162,7 @@ def _ppo_index_from_dir_name(name: str) -> int | None:
 
 
 def _flat_ppo_index_from_dir_name(name: str, *, run_prefix: str) -> int | None:
-    # Индекс из плоского каталога {run_prefix}#PPO_N (старый формат).
+    # Индекс из плоского каталога {run_prefix}#PPO_N (старый формат)
     prefix = f"{run_prefix}#PPO_"
     if not name.startswith(prefix):
         return None
@@ -251,10 +245,8 @@ def train_ppo(
     demo_pretrain_learning_rate: float | None = None,
     demo_pretrain_max_grad_norm: float | None = None,
 ) -> Path:
-    # Обучение PPO на BalloonEnv.
-    #
-    # Возвращает каталог текущего run-а (TensorBoard tb_*, подкаталог trajectories).
-    #
+    # Обучение PPO на BalloonEnv
+    # Возвращает каталог текущего run-а (TensorBoard tb_*, подкаталог trajectories)
     from diplom.trajectory.live.callback import TrajectoryVisualizationCallback
 
     parent_logdir = config.training.logdir
@@ -262,13 +254,13 @@ def train_ppo(
     device = resolve_torch_device(config.training.device)
     ppo_verbose = config.training.verbose
     model_spec = get_model_spec(config.training.model_name)
-    print(f"[train_ppo] Using device={device}")  # noqa: T201
-    print(f"[train_ppo] PPO model: {model_spec.name} ({model_spec.policy_type})")  # noqa: T201
-    print(f"[train_ppo] Reward: {config.environment.reward_name}")  # noqa: T201
-    print(f"[train_ppo] Obs: {config.environment.obs_name}")  # noqa: T201
-    print(f"[train_ppo] Dataset: {config.wind.path.name}")  # noqa: T201
-    print(f"[train_ppo] Log directory: {parent_logdir}")  # noqa: T201
-    print(f"[train_ppo] Run prefix: {run_prefix}")  # noqa: T201
+    print(f"train_ppo Using device={device}")
+    print(f"train_ppo PPO model: {model_spec.name} ({model_spec.policy_type})")
+    print(f"train_ppo Reward: {config.environment.reward_name}")
+    print(f"train_ppo Obs: {config.environment.obs_name}")
+    print(f"train_ppo Dataset: {config.wind.path.name}")
+    print(f"train_ppo Log directory: {parent_logdir}")
+    print(f"train_ppo Run prefix: {run_prefix}")
 
     if run_dir is None:
         run_dir, model_path, continuing = _resolve_run_and_model(
@@ -283,21 +275,21 @@ def train_ppo(
 
     reset_num_timesteps = not continuing
     if continuing:
-        print(f"[train_ppo] Продолжаем из {model_path}")  # noqa: T201
-        print(f"[train_ppo] TensorBoard и артефакты: {run_dir}")  # noqa: T201
+        print(f"train_ppo Продолжаем из {model_path}")
+        print(f"train_ppo TensorBoard и артефакты: {run_dir}")
     elif resume:
-        print(  # noqa: T201
-            f"[train_ppo] --resume: модель не найдена в run-каталогах, начинаем новый run"
+        print(
+            f"train_ppo--resume: модель не найдена в run-каталогах, начинаем новый run"
         )
     traj_dir = run_dir / "trajectories"
-    print(f"[train_ppo] Run directory: {run_dir}")  # noqa: T201
+    print(f"train_ppo Run directory: {run_dir}")
 
     trajectory_steps_dir = traj_dir if enable_trajectory_viz else None
     if enable_trajectory_viz:
-        print(f"[train_ppo] Trajectory viz: {traj_dir.resolve()}")  # noqa: T201
+        print(f"train_ppo Trajectory viz: {traj_dir.resolve()}")
         cleanup_steps_dir(traj_dir)
     else:
-        print("[train_ppo] Trajectory viz: off (--no-trajectories)")  # noqa: T201
+        print("train_ppo Trajectory viz: off (--no-trajectories)")
     vec_env = _make_vec_env(
         config,
         force_dummy=force_dummy_vec_env,
@@ -305,9 +297,9 @@ def train_ppo(
         model_name=config.training.model_name,
     )
     if model_spec.recurrent and not force_dummy_vec_env and config.training.n_envs > 1:
-        print("[train_ppo] VecEnv: SubprocVecEnv (RecurrentPPO, без worker rollout)")  # noqa: T201
+        print("train_ppo VecEnv: SubprocVecEnv (RecurrentPPO, без worker rollout)")
     elif not force_dummy_vec_env and config.training.n_envs > 1:
-        print("[train_ppo] VecEnv: PolicyShmemSubprocVecEnv (worker policy + shmem)")  # noqa: T201
+        print("train_ppo VecEnv: PolicyShmemSubprocVecEnv (worker policy + shmem)")
     info_callback = InfoLoggingCallback()
     episode_stats_callback = EpisodeStatsCallback()
 
@@ -318,7 +310,7 @@ def train_ppo(
             origin_lat=probe_interp.origin_lat,
             origin_lon=probe_interp.origin_lon,
             wind_path=config.wind.path,
-            prefix="[train_ppo]",
+            prefix="train_ppo",
         )
     finally:
         probe_interp.close()
@@ -355,26 +347,26 @@ def train_ppo(
 
     def _save_model() -> None:
         model.save(run_dir / "ppo_model")
-        print(f"[train_ppo] Модель сохранена в {model_path}")  # noqa: T201
+        print(f"train_ppo Модель сохранена в {model_path}")
 
     try:
         if continuing:
-            print(f"[train_ppo] Продолжаем обучение из {model_path}")  # noqa: T201
+            print(f"train_ppo Продолжаем обучение из {model_path}")
             model = ppo_cls.load(model_path, env=vec_env, device=device)
             model.tensorboard_log = str(run_dir)
         else:
             if model_path.exists() and not resume:
-                print(  # noqa: T201
-                    f"[train_ppo] {model_path} уже существует, но --resume не задан, "
+                print(
+                    f"train_ppo{model_path} уже существует, но --resume не задан, "
                     "будет перезаписан в конце обучения"
                 )
             model = ppo_cls(
                 policy=model_spec.policy_type,
                 env=vec_env,
                 # Собираем больше опыта перед каждым обновлением, лучше
-                # использование данных и меньше накладных расходов обновления.
+                # использование данных и меньше накладных расходов обновления
                 n_steps=config.training.ppo_n_steps,
-                # 512 делит rollout_size=4096*n_envs нацело и эффективнее на MPS/CPU.
+                # 512 делит rollout_size=4096*n_envs нацело и эффективнее на MPS/CPU
                 batch_size=512,
                 n_epochs=10,
                 learning_rate=config.training.learning_rate,
@@ -391,7 +383,7 @@ def train_ppo(
                 device=device,
             )
         if demo_dataset_path is not None and demo_pretrain_epochs > 0:
-            print(f"[train_ppo] Demo dataset: {demo_dataset_path}")  # noqa: T201
+            print(f"train_ppo Demo dataset: {demo_dataset_path}")
             pretrain_summary = pretrain_policy_on_demo_dataset(
                 model,
                 demo_dataset_path,
@@ -400,8 +392,8 @@ def train_ppo(
                 learning_rate=demo_pretrain_learning_rate,
                 max_grad_norm=demo_pretrain_max_grad_norm,
             )
-            print(  # noqa: T201
-                "[train_ppo] Demo pretraining: "
+            print(
+                "train_ppo Demo pretraining: "
                 f"samples={pretrain_summary.sample_count} "
                 f"epochs={pretrain_summary.epochs} "
                 f"batch_size={pretrain_summary.batch_size} "

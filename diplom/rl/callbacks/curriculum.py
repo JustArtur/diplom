@@ -1,5 +1,3 @@
-# Куррикулумы обучения PPO и расписание ent_coef.
-
 from __future__ import annotations
 
 from stable_baselines3.common.callbacks import BaseCallback
@@ -83,26 +81,24 @@ def log_episode_length_curriculum_plan(
     *,
     start_timesteps: int = 0,
 ) -> None:
-    # Печатает таблицу этапов max_episode_steps в stdout при старте обучения.
     normalized = normalize_episode_length_curriculum_stages(stages)
-    print("[episode_length_curriculum] max_episode_steps по global timesteps:")  # noqa: T201
+    print("episode_length_curriculum max_episode_steps по global timesteps:")
     for idx, stage in enumerate(normalized):
         until_label = "∞" if stage.until_timesteps is None else f"{stage.until_timesteps:,}"
-        print(  # noqa: T201
+        print(
             f"  этап {idx + 1}: {stage.from_timesteps:,} ≤ timesteps < {until_label} "
             f"-> max_episode_steps={stage.max_episode_steps:,}"
         )
 
     active_idx = resolve_episode_length_stage_index(start_timesteps, normalized)
     active = normalized[active_idx]
-    print(  # noqa: T201
+    print(
         f"  сейчас: timesteps={start_timesteps:,} -> этап {active_idx + 1}, "
         f"max_episode_steps={active.max_episode_steps:,}"
     )
 
 
 class TrainEpisodeLengthCurriculumCallback(BaseCallback):
-    # Синхронно повышает max_episode_steps во всех средах по числу шагов обучения.
 
     def __init__(
         self,
@@ -136,16 +132,14 @@ class TrainEpisodeLengthCurriculumCallback(BaseCallback):
             self.logger.record("curriculum/max_episode_steps", float(max_steps))
         if self.verbose:
             until = stage.until_timesteps if stage.until_timesteps is not None else _LAST_STAGE_UNTIL
-            print(  # noqa: T201
-                f"[episode_length_curriculum] stage {idx + 1}/{len(self._stages)} "
+            print(
+                f"episode_length_curriculum stage {idx + 1}/{len(self._stages)} "
                 f"({stage.from_timesteps:,} ≤ timesteps < {until:,}): "
                 f"max_episode_steps={max_steps:,}"
             )
 
 
-# Entropy coefficient schedule
 class EntCoefScheduleCallback(BaseCallback):
-    # ent_coef: start -> end за decay_timesteps (linear).
 
     def __init__(
         self,

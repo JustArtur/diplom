@@ -1,5 +1,3 @@
-# SB3-callback: логирование полей info из каждой среды в TensorBoard.
-
 from __future__ import annotations
 
 from stable_baselines3.common.callbacks import BaseCallback
@@ -8,12 +6,10 @@ from diplom.rl.logging.env_info_log_keys import ENV_INFO_LOG_KEYS
 
 
 class InfoLoggingCallback(BaseCallback):
-    # Собирает выбранные скалярные поля info и пишет mean за rollout в TensorBoard.
-    #
+    # Собирает выбранные скалярные поля info и пишет mean за rollout в TensorBoard
     # PPO сам не выводит содержимое info, поэтому callback накапливает только
-    # заранее заданный набор ключей и логирует среднее по шагам rollout.
-    # В stdout метрики не попадают, только TensorBoard.
-    #
+    # заранее заданный набор ключей и логирует среднее по шагам rollout
+    # В stdout метрики не попадают, только TensorBoard
 
     _KEYS = ENV_INFO_LOG_KEYS
 

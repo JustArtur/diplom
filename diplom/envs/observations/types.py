@@ -1,5 +1,3 @@
-# ObsStepContext для сборки наблюдений.
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,7 +9,6 @@ from diplom.envs.rewards.types import RewardState
 
 @dataclass(frozen=True, slots=True)
 class ObsStepContext:
-    # Immutable контекст одного шага; поля, см. docstring модуля.
 
     sim_time: np.datetime64
     z_min: float

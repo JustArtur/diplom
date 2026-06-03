@@ -1,5 +1,3 @@
-# Reward long_horizon: shaping под длинный горизонт.
-
 from __future__ import annotations
 
 import numpy as np
@@ -82,7 +80,6 @@ def _asymmetric_progress_term(
 
 
 def _pbrs_term(prev_horizontal: float, curr_horizontal: float) -> float:
-    # PBRS: gamma * Phi(s') - Phi(s), Phi(s) = -coef * dist / scale.
     delta = prev_horizontal - PBRS_GAMMA * curr_horizontal
     return PBRS_COEF * delta / PBRS_DISTANCE_SCALE
 

@@ -1,6 +1,4 @@
-# Реестр PPO-моделей (default, explore, lstm). Выбор: diplom train-ppo --model <name>.
-#
-# Размер входа сети должен совпадать с OBS_DIM выбранной obs-модели.
+# Реестр PPO-моделей (default, explore, lstm). Выбор: diplom train-ppo --model <name>
 
 from __future__ import annotations
 

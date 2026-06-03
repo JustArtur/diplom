@@ -1,5 +1,3 @@
-# Reward pbrs: PBRS по 3D-дистанции и probe-ветру.
-
 from __future__ import annotations
 
 import numpy as np

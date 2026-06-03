@@ -118,13 +118,12 @@ def train_ppo(
         help="Ограничение нормы градиента во время BC/pretraining",
     ),
 ) -> None:
-    # Запустить обучение PPO-модели.
     from diplom.dev.profiling.runner import PROFILE_N_ENVS
     from diplom.rl.ppo.runner import train_ppo as run_train_ppo
 
     if open_trajectories and not trajectories:
         typer.echo(
-            "[ошибка] --open-trajectories требует включённых --trajectories",
+            "ошибка: --open-trajectories требует включённых --trajectories",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -171,8 +170,8 @@ def train_ppo(
         run_train_ppo(
             app_config,
             force_dummy_vec_env=in_process,
-            enable_trajectory_viz=trajectories,
-            open_trajectory_viz=open_trajectories,
+            enable_trajectory_viz =trajectories,
+            open_trajectory_viz =open_trajectories,
             resume=resume,
             demo_dataset_path=demo_dataset,
             demo_pretrain_epochs=demo_pretrain_epochs,
@@ -186,24 +185,17 @@ def train_ppo(
 
 
 def train_parallel_ppo(ctx: typer.Context) -> None:
-    # Несколько train-ppo параллельно с одним процессом рендера траекторий.
-    #
-    # Из манифеста (data/training/datasets_manifest.toml):
-    #
-    # 
+    # Несколько train-ppo параллельно с одним процессом рендера траекторий
+    # Из манифеста (data/training/datasets_manifest.toml)
     # diplom train-parallel-ppo --from-manifest
     # diplom train-parallel-ppo --from-manifest --jobs 2
-    #
-    # Вручную, глобально --jobs N, затем блоки runner:
-    #
-    # 
+    # Вручную, глобально --jobs N, затем блоки runner
     # diplom train-parallel-ppo --jobs 2 runner --dataset era5_... --envs=2
-    #
     from diplom.dev.parallel_ppo import run_train_parallel_ppo
 
     try:
         code = run_train_parallel_ppo(list(ctx.args))
     except ValueError as exc:
-        typer.echo(f"[ошибка] {exc}", err=True)
+        typer.echo(f"ошибка: {exc}", err=True)
         raise typer.Exit(code=1) from exc
     raise typer.Exit(code=code)

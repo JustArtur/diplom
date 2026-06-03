@@ -18,7 +18,7 @@ from diplom.data.era5_paths import (
 
 @dataclass(frozen=True, slots=True)
 class TrainRunDefaults:
-    # Глобальные настройки train-ppo из секции [train] манифеста.
+    # Глобальные настройки train-ppo из секции [train] манифеста
 
     envs: int | None = None
     timesteps: int | None = None
@@ -31,7 +31,7 @@ class TrainRunDefaults:
     extra_args: tuple[str, ...] = ()
 
     def merge_with(self, other: TrainRunDefaults) -> TrainRunDefaults:
-        # Поверх глобальных, пер-датасетные переопределения (other не None).
+        # Поверх глобальных, пер-датасетные переопределения (other не None)
         return TrainRunDefaults(
             envs=other.envs if other.envs is not None else self.envs,
             timesteps=other.timesteps if other.timesteps is not None else self.timesteps,
@@ -51,7 +51,7 @@ class TrainRunDefaults:
 
 @dataclass(frozen=True, slots=True)
 class TrainingDatasetSpec:
-    # Одна запись из datasets_manifest.toml.
+    # Одна запись из datasets_manifest.toml
 
     north: float
     south: float
@@ -81,7 +81,7 @@ class TrainingDatasetSpec:
         return self.outfile.stem
 
     def train_argv(self, defaults: TrainRunDefaults) -> list[str]:
-        # Аргументы для одного блока runner в train-parallel-ppo.
+        # Аргументы для одного блока runner в train-parallel-ppo
         merged = defaults.merge_with(self.train)
         argv: list[str] = ["--dataset", self.stem]
 
@@ -150,7 +150,7 @@ def _parse_train_defaults(raw: dict | None, *, context: str) -> TrainRunDefaults
 
 
 def load_training_manifest(path: Path = ERA5_TRAINING_MANIFEST_PATH) -> TrainingManifest:
-    # Прочитать манифест training-датасетов и настроек обучения.
+    # Прочитать манифест training-датасетов и настроек обучения
     if not path.is_file():
         raise FileNotFoundError(f"Манифест не найден: {path}")
 
@@ -223,7 +223,6 @@ def build_train_parallel_argv(
     *,
     jobs_override: int | None = None,
 ) -> list[str]:
-    # Собрать argv для run_train_parallel_ppo из манифеста.
     from diplom.dev.parallel_ppo import RUNNER_TOKEN
 
     argv: list[str] = []
@@ -247,7 +246,6 @@ MANIFEST_PATH_TRAIN_FLAG = "--manifest"
 
 
 def expand_training_manifest_argv(argv: list[str]) -> list[str]:
-    # Подставить runner-блоки из манифеста, если передан --from-manifest.
     if MANIFEST_FROM_TRAIN_FLAG not in argv and "-M" not in argv:
         return argv
 
@@ -304,7 +302,7 @@ def download_training_manifest(
     chunks_dir: Path | None,
     force: bool = False,
 ) -> tuple[int, int, int]:
-    # Скачать датасеты из манифеста. Возвращает (всего, скачано, пропущено).
+    # Скачать датасеты из манифеста. Возвращает (всего, скачано, пропущено)
     specs = manifest.datasets
     total = len(specs)
     downloaded = 0
@@ -318,7 +316,7 @@ def download_training_manifest(
     for index, spec in enumerate(specs, start=1):
         label = spec.title or spec.stem
         typer.secho(
-            f"\n[{index}/{total}] {label} -> {spec.outfile.name}",
+            f"\n{index}/{total} {label} -> {spec.outfile.name}",
             fg=typer.colors.CYAN,
             bold=True,
         )

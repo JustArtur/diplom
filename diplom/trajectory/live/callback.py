@@ -28,11 +28,6 @@ from diplom.trajectory.steps_io import (
 
 
 class TrajectoryVisualizationCallback(BaseCallback):
-    # Рендер HTML траекторий в фоне.
-    #
-    # Среда пишет шаги в JSONL, раз в rollout callback отдаёт файлы воркеру.
-    # combined_html: один trajectories.html или отдельный env_XXX.html на среду.
-    #
 
     def __init__(
         self,
@@ -95,8 +90,8 @@ class TrajectoryVisualizationCallback(BaseCallback):
                 )
             if self.verbose:
                 mode = "shared socket" if isinstance(self._render_queue, str) else "local worker"
-                print(  # noqa: T201
-                    f"[trajectory_viz] рендер включён ({mode}), каталог {self._output_dir.resolve()}"
+                print(
+                    f"trajectory_viz рендер включён ({mode}), каталог {self._output_dir.resolve()}"
                 )
         except Exception:  # noqa: BLE001
             traceback.print_exc()
@@ -104,7 +99,7 @@ class TrajectoryVisualizationCallback(BaseCallback):
             self._render_process = None
 
     def _on_step(self) -> bool:
-        # SB3 требует реализацию; шаги пишутся в subprocess (BalloonEnv).
+        # SB3 требует реализацию; шаги пишутся в subprocess (BalloonEnv)
         return True
 
     def _on_training_end(self) -> None:
@@ -115,7 +110,6 @@ class TrajectoryVisualizationCallback(BaseCallback):
         cleanup_steps_dir(self._output_dir)
 
     def _on_rollout_end(self) -> None:
-        # Собрать пути к JSONL из subprocess и передать воркеру рендера.
         if self._render_queue is None:
             return
 
@@ -211,7 +205,6 @@ def _open_trajectory_viewers(
     world_bounds: WorldBounds | None,
     combined_html: bool = True,
 ) -> None:
-    # Создать live-viewer при необходимости и открыть вкладки в браузере.
     from diplom.viz.plotly.episode_figure import (
         build_placeholder_combined_figure,
         build_placeholder_live_figure,
@@ -235,7 +228,6 @@ def _open_trajectory_viewers(
 
 
 def _get_world_bounds(training_env) -> WorldBounds | None:
-    # Попробовать вытащить общие границы мира из VecEnv.
     if training_env is None:
         return None
 

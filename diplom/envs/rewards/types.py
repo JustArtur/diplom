@@ -1,5 +1,3 @@
-# Контекст шага, состояние эпизода и результат reward.
-
 from __future__ import annotations
 
 from collections import deque
@@ -13,7 +11,7 @@ from diplom.sim.simulation import SimResult
 
 @dataclass(frozen=True, slots=True)
 class RewardStepContext:
-    # Параметры одного шага среды; одинаковы для всех reward-модулей.
+    # Параметры одного шага среды; одинаковы для всех reward-модулей
 
     result: SimResult
     previous_position: np.ndarray

@@ -1,5 +1,3 @@
-# PPO lstm: RecurrentPPO с LSTM.
-
 from __future__ import annotations
 
 from diplom.rl.ppo.models.default import ModelSpec

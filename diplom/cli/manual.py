@@ -215,7 +215,7 @@ def _apply_trajectory_smoothing(
     default_smooth_alpha: float,
     default_smooth_window: int,
 ) -> tuple[list[dict[str, object]], int, float | None, np.ndarray, bool, bool, int]:
-    # Сгладить участок траектории и пересчитать replay.
+    # Сгладить участок траектории и пересчитать replay
     step_count = len(current_steps)
     if step_count == 0:
         typer.echo("Нечего сглаживать: эпизод ещё не содержит шагов.")
@@ -337,7 +337,6 @@ def _apply_trajectory_smoothing(
     rewrite_env_current_trajectory(env, current_steps)
     new_anchor = len(current_steps) if update_anchor else smooth_anchor
     # Уникальный generation гарантирует, что live-viewer подхватит сглаженную траекторию
-    # (file:// часто кэширует ping-pong слоты с тем же URL).
     live_generation = max(live_generation + 1, int(time.time() * 1000))
     _update_live_html(
         html_path=html_path,
@@ -556,7 +555,7 @@ def manual_rollout(
         help="Окно для moving_average-сглаживания",
     ),
 ) -> None:
-    # Интерактивный терминальный эпизод: человек выбирает action, среда пишет траекторию.
+    # Интерактивный терминальный эпизод: человек выбирает action, среда пишет траекторию
     get_reward_fn(reward)
     get_obs_spec(obs)
 

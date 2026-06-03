@@ -1,6 +1,4 @@
-# Реестр obs-моделей (default, minimal). Выбор: diplom train-ppo --obs <name>.
-#
-# Каждый модуль экспортирует build_obs и OBS_DIM. Размерность должна совпадать с чекпоинтом.
+# Реестр obs-моделей (default, minimal). Выбор: diplom train-ppo --obs <name>
 
 from __future__ import annotations
 

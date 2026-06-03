@@ -1,5 +1,3 @@
-# Фабрика зависимостей и точка входа для запуска визуализации.
-
 from dataclasses import replace
 
 import pyvista as pv
@@ -14,34 +12,31 @@ from .simulation import BalloonSimulation
 
 
 class VisualizationRunner:
-    # Собирает зависимости (plotter, HUD, частицы) и запускает визуализацию.
+    # Собирает зависимости (plotter, HUD, частицы) и запускает визуализацию
 
     def build_plotter(self, config: VisualizationConfig) -> pv.Plotter:
-        # Создать и настроить PyVista Plotter.
         plotter = pv.Plotter(window_size=list(config.window_size))
         plotter.set_background(config.bg_bottom, top=config.bg_top)
         return plotter
 
     @staticmethod
     def build_hud(plotter: pv.Plotter) -> BalloonHUD:
-        # Создать HUD для данного плоттера.
         return BalloonHUD(plotter)
 
     def run_real(self, config: AppConfig) -> None:
-        # Загрузить реальные данные ветра и запустить визуализацию.
         wind_interpolator = build_wind_interpolator(config.wind)
         log_world_bounds(
             wind_interpolator.world_bounds,
             origin_lat=wind_interpolator.origin_lat,
             origin_lon=wind_interpolator.origin_lon,
             wind_path=config.wind.path,
-            prefix="[viz-real]",
+            prefix="viz-real",
         )
         sim_time = resolve_sim_time(
             config.visualization.sim_start_time,
             time_min=wind_interpolator.time_min,
         )
-        # Те же старт/цель/время, что и в BalloonEnv (environment.balloon), а не пустой simulation.balloon.
+        # Те же старт/цель/время, что и в BalloonEnv (environment.balloon), а не пустой simulation.balloon
         balloon = replace(config.environment.balloon, sim_time=sim_time)
         simulation_config = replace(config.simulation, balloon=balloon)
         simulation = create_simulation(simulation_config, wind_interpolator)

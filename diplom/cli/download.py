@@ -87,32 +87,27 @@ def download(
         help="Перекачать, даже если NetCDF уже есть (удаляет файл и чанки).",
     ),
 ) -> None:
-    # Скачать подмножество ERA5 в NetCDF.
-    #
-    # Один регион, укажите --north/--south/--west/--east и --start/--end.
-    #
-    # Все обязательные training-датасеты:
-    #
-    # 
+    # Скачать подмножество ERA5 в NetCDF
+    # Один регион, укажите --north/--south/--west/--east и --start/--end
+    # Все обязательные training-датасеты
     # diplom download --all --hour-step 8 -j 15
     # diplom download --all --force --hour-step 8 -j 15
-    #
     from diplom.data.era5_download import download_era5_pressure
     from diplom.data.era5_manifest import download_training_manifest, load_training_manifest
 
     if download_all:
         if preview:
-            typer.echo("[ошибка] --all несовместим с --preview (манифест только для data/training/)", err=True)
+            typer.echo("ошибка: --all несовместим с --preview (манифест только для data/training/)", err=True)
             raise typer.Exit(code=1)
         if outfile is not None:
-            typer.echo("[ошибка] --all несовместим с --outfile", err=True)
+            typer.echo("ошибка: --all несовместим с --outfile", err=True)
             raise typer.Exit(code=1)
 
         manifest_path = manifest or ERA5_TRAINING_MANIFEST_PATH
         try:
             training_manifest = load_training_manifest(manifest_path)
         except (FileNotFoundError, ValueError) as exc:
-            typer.echo(f"[ошибка] {exc}", err=True)
+            typer.echo(f"ошибка: {exc}", err=True)
             raise typer.Exit(code=1) from exc
 
         download_training_manifest(
@@ -128,7 +123,7 @@ def download(
         return
 
     if manifest is not None:
-        typer.echo("[ошибка] --manifest используйте вместе с --all", err=True)
+        typer.echo("ошибка: --manifest используйте вместе с --all", err=True)
         raise typer.Exit(code=1)
 
     data_dir = ERA5_PREVIEW_DATA_DIR if preview else ERA5_TRAINING_DATA_DIR

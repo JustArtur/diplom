@@ -22,13 +22,13 @@ def _clip_actions(actions: list[float], action_limit: float) -> list[float]:
 
 
 def _cosine_ease(t: float) -> float:
-    # S-кривая без резких производных на концах.
+    # S-кривая без резких производных на концах
     x = float(np.clip(t, 0.0, 1.0))
     return 0.5 - 0.5 * float(np.cos(np.pi * x))
 
 
 def _extract_action_plateaus(actions: list[float]) -> list[tuple[int, int, float]]:
-    # Индексы [start, end) и значение для каждого платo постоянного action.
+    # Индексы [start, end) и значение для каждого платo постоянного action
     if not actions:
         return []
 
@@ -81,11 +81,9 @@ def smooth_actions_keyframe(
     blend_fraction: float = 0.6,
     action_limit: float | None = None,
 ) -> tuple[list[float], SmoothingStats]:
-    # Сгладить участок action с последней точки s до текущего шага.
-    #
+    # Сгладить участок action с последней точки s до текущего шага
     # На каждом скачке, S-кривая через blend_fraction (по умолчанию 0.6)
-    # предыдущего и следующего платo вокруг границы.
-    #
+    # предыдущего и следующего платo вокруг границы
     count = len(actions)
     if count <= 1:
         return [float(value) for value in actions], SmoothingStats(0, 0.0, 0, count)
@@ -142,7 +140,7 @@ def smooth_actions_transition(
     blend_fraction: float = 0.6,
     action_limit: float | None = None,
 ) -> list[float]:
-    # Keyframe-рампы (основной режим для manual s).
+    # Keyframe-рампы (основной режим для manual s)
     smoothed, _stats = smooth_actions_keyframe(
         actions,
         blend_fraction=blend_fraction,
@@ -201,7 +199,7 @@ def smooth_actions(
     window: int = 8,
     action_limit: float | None = None,
 ) -> tuple[list[float], SmoothingStats]:
-    # Сгладить последовательность action перед replay в физике.
+    # Сгладить последовательность action перед replay в физике
     if method == "ema":
         smoothed = smooth_actions_ema(actions, alpha=alpha, action_limit=action_limit)
         return smoothed, count_action_transitions(actions)

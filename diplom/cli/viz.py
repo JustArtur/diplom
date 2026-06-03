@@ -29,20 +29,14 @@ def viz_real(
     data_dir: Path = DATA_DIR_OPTION,
     manifest_path: Path = MANIFEST_OPTION,
 ) -> None:
-    # Запуск PyVista-визуализации на реальном ветре.
-    #
-    # Примеры:
-    #
-    # 
+    # Запуск PyVista-визуализации на реальном ветре
+    # Примеры
     # # Датасет по умолчанию (DEFAULT_ERA5_OUTFILE)
     # diplom viz-real
-    #
-    # 
     # # Конкретный датасет по имени, пути или id из манифеста
     # diplom viz-real --dataset era5_35_-5_50_110_2024-10-05_2024-10-19
     # diplom viz-real --dataset #1
     # diplom viz-real --dataset data/training/era5_....nc --start-time 2024-10-05T12:00:00
-    #
     from diplom.viz.pyvista.runner import VisualizationRunner
 
     app_config = build_default_app_config(
@@ -122,38 +116,22 @@ def wind_viz(
         help="Пересоздать HTML-графики, даже если они уже существуют",
     ),
 ) -> None:
-    # Построить интерактивные 3D-графы поля ветра ERA5.
-    #
-    # По умолчанию обходит все *.nc в data/preview/ и сохраняет HTML в runs/wind/.
+    # По умолчанию обходит все *.nc в data/preview/ и сохраняет HTML в runs/wind/
     # Заголовок графика совпадает с именем датасета; уже существующие файлы пропускаются
-    # (используйте --force для пересоздания).
-    #
-    # Примеры:
-    #
-    # 
+    # (используйте --force для пересоздания)
+    # Примеры
     # # Все preview-датасеты
     # diplom wind-viz
-    #
-    # 
     # # Список доступных временных меток (все датасеты или один файл)
     # diplom wind-viz --list-times
-    #
-    # 
     # # Параллельно 4 процесса
     # diplom wind-viz -j 4 --stride-lat 2 --stride-lon 2
-    #
-    # 
     # # Один файл, конкретное время
     # diplom wind-viz -f data/preview/era5_....nc --time 2024-07-01T12:00:00 --stride-lat 2
-    #
-    # 
     # # Датасеты из каталога обучения
     # diplom wind-viz --data-dir data/training
-    #
-    # 
     # # Пересоздать все графики (игнорировать уже существующие)
     # diplom wind-viz --force
-    #
     from diplom.viz.plotly.wind import (
         WindPlotRenderJob,
         list_available_times,
@@ -166,7 +144,7 @@ def wind_viz(
         dataset_paths = list_era5_datasets(data_dir)
         if not dataset_paths:
             typer.echo(
-                f"[ошибка] В каталоге {data_dir} нет файлов *.nc.\n"
+                f"ошибка: В каталоге {data_dir} нет файлов *.nc.\n"
                 "Скачайте данные: diplom download --preview (просмотр) "
                 "или diplom download (обучение)",
                 err=True,
@@ -176,7 +154,7 @@ def wind_viz(
     missing = [p for p in dataset_paths if not p.exists()]
     if missing:
         for path in missing:
-            typer.echo(f"[ошибка] Файл ERA5 не найден: {path}", err=True)
+            typer.echo(f"ошибка: Файл ERA5 не найден: {path}", err=True)
         raise typer.Exit(code=1)
 
     if list_times:
@@ -266,7 +244,7 @@ def wind_viz(
 
     if errors:
         for msg in errors:
-            typer.echo(f"[ошибка] {msg}", err=True)
+            typer.echo(f"ошибка: {msg}", err=True)
         raise typer.Exit(code=1)
 
     if not saved_paths:

@@ -1,5 +1,3 @@
-# Reward weak_z_stick: полный reward, но мягче z_stick.
-
 from __future__ import annotations
 
 import numpy as np

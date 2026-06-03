@@ -25,13 +25,7 @@ from diplom.wind.interp import WindInterpolator
 
 
 class _StepInfoDict(dict[str, Any]):
-    # Лёгкий dict для info, который не рекурсивно deep-copy'ится SB3.
-    #
-    # DummyVecEnv делает copy.deepcopy(info) на каждом шаге. У нас в info
-    # только скаляры и редкие вложенные dict'ы без разделяемого состояния, поэтому
-    # достаточно поверхностной копии. Это сохраняет контракт dict, но убирает
-    # дорогой рекурсивный проход по тысячам однотипных скаляров.
-    #
+    # SB3 копирует info каждый шаг, shallow ок
 
     def __deepcopy__(self, memo: dict[int, Any]) -> "_StepInfoDict":
         del memo
@@ -39,12 +33,7 @@ class _StepInfoDict(dict[str, Any]):
 
 
 class BalloonEnv(gym.Env):
-    # Gymnasium-среда управления стратостатом.
-    #
-    # Принимает готовый WindInterpolator и считается его единственным владельцем:
-    # метод close() закрывает интерполятор. Не передавайте один интерполятор
-    # в несколько сред одновременно.
-    #
+    # один интерполятор на одну среду
 
     metadata = {"render_modes": ["ansi"], "render_fps": 20}
 
@@ -111,7 +100,7 @@ class BalloonEnv(gym.Env):
     ) -> tuple[np.ndarray, dict[str, Any]]:
         super().reset(seed=seed)
 
-        # На каждый эпизод создаём новое состояние, чтобы не переносить скрытые эффекты между reset().
+        # На каждый эпизод создаём новое состояние, чтобы не переносить скрытые эффекты между reset()
         self._step_count = 0
         self._pending_step = None
         self._pending_step_build = None
@@ -317,12 +306,7 @@ class BalloonEnv(gym.Env):
         )
 
     def consume_step_record(self) -> dict[str, Any]:
-        # Отдать запись шага (rollout/отладка) и очистить буфер.
-        #
-        # В info остаются только скаляры для TensorBoard; полные данные шага
-        # забираются здесь, чтобы DummyVecEnv не делал deepcopy numpy-массивов.
-        # При обучении JSONL пишется в subprocess через _steps_writer.
-        #
+        # в info только скаляры для tb; шаги на диск пишет _steps_writer в воркере
         if self._pending_step is None and self._pending_step_build is not None:
             self._pending_step = self._build_step_record(**self._pending_step_build)
             self._pending_step_build = None
@@ -333,7 +317,7 @@ class BalloonEnv(gym.Env):
         return record
 
     def get_trajectory_viz_state(self) -> dict[str, Any]:
-        # Метаданные траекторий для снапшота рендера (один вызов за rollout).
+        # мета траекторий для снапшота рендера
         if self._steps_writer is None:
             return {}
         self._steps_writer.flush()
@@ -347,9 +331,7 @@ class BalloonEnv(gym.Env):
         }
 
     def _trim_episode_history(self) -> None:
-        # Файлы не удаляем здесь: рендер читает их асинхронно из снапшота,
-        # и удаление до завершения рендера оставляет в HTML только текущий эпизод.
-        # Временные JSONL убираются в cleanup_steps_dir() после остановки обучения.
+        # файлы не трогаем — рендер читает асинхронно; чистка в cleanup_steps_dir
         while len(self._episode_history) > self._trajectory_max_history:
             self._episode_history.pop(0)
 
@@ -474,7 +456,7 @@ class BalloonEnv(gym.Env):
         self.wind_interp.close()
 
     def render(self):
-        # Текстовый снимок состояния для CLI/отладки.
+        # текст для CLI
         snapshot = self.sim.snapshot()
         position = np.round(snapshot.position, 2)
         target_position = np.round(snapshot.target_position, 2)
@@ -505,7 +487,7 @@ class BalloonEnv(gym.Env):
         target_position = self.base_balloon.target_position
 
         if self.randomize_initial_position:
-            # Для train-режима рандомизируем старт по X/Y; высота, всегда base_balloon.initial_position[2].
+            # train: рандом X/Y, Z из initial_position[2]
             initial_position = self._sample_initial_position(
                 self.base_balloon.initial_position,
                 self.train_initial_position_delta,
@@ -520,7 +502,7 @@ class BalloonEnv(gym.Env):
         )
 
     def _sample_target_position(self, initial_position: np.ndarray) -> np.ndarray:
-        # Сэмплирует целевую позицию и гарантирует минимальное расстояние до стартовой точки.
+        # Сэмплирует целевую позицию и гарантирует минимальное расстояние до стартовой точки
         min_distance = 3000.0
 
         while True:
@@ -541,7 +523,7 @@ class BalloonEnv(gym.Env):
 
 
     def _sample_initial_position(self, center: np.ndarray, delta: np.ndarray) -> np.ndarray:
-        # Сэмплирует стартовую позицию: X/Y в окне delta, Z фиксирована.
+        # Сэмплирует стартовую позицию: X/Y в окне delta, Z фиксирована
         sample = self._sample_position(center, delta)
         sample[2] = np.float32(center[2])
         return sample

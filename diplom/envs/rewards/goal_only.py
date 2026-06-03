@@ -1,5 +1,3 @@
-# Reward goal_only: только награда за достижение цели.
-
 from __future__ import annotations
 
 import numpy as np

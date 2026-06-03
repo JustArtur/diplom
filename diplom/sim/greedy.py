@@ -28,7 +28,7 @@ class GreedyActionChoice:
 
 @dataclass(frozen=True, slots=True)
 class GreedyRunConfig:
-    # Единственный источник дефолтов greedy baseline (CLI и choose_greedy_action).
+    # Единственный источник дефолтов greedy baseline (CLI и choose_greedy_action)
 
     lookahead_steps: int = 600
     candidate_count: int = 10
@@ -218,7 +218,7 @@ def greedy_episodes(
         origin_lat=env.wind_interp.origin_lat,
         origin_lon=env.wind_interp.origin_lon,
         wind_path=config.wind.path,
-        prefix="[greedy]",
+        prefix="greedy",
     )
     results: List[EpisodeResult] = []
     traj_dir = env_config.trajectory_steps_dir
@@ -290,7 +290,7 @@ def greedy_episodes(
                 )
 
                 if render:
-                    print(env.render())  # noqa: T201 - CLI вывод
+                    print(env.render())
 
                 global_step += 1
                 if render_queue is not None and global_step % render_interval == 0:

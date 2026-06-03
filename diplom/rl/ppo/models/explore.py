@@ -1,5 +1,3 @@
-# PPO explore: шире сеть, больше exploration.
-
 from __future__ import annotations
 
 from diplom.rl.ppo.models.default import ModelSpec

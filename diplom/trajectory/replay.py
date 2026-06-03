@@ -22,7 +22,6 @@ def replay_episode_actions(
     seed: int,
     actions: list[float],
 ) -> EpisodeReplayResult:
-    # Сбросить среду и прогнать actions заново, пересчитав физику, ветер, reward и obs.
     obs, _ = env.reset(seed=seed)
     steps: list[dict[str, object]] = []
     total_reward = 0.0
@@ -50,8 +49,7 @@ def replay_episode_actions(
 
 
 def rewrite_env_current_trajectory(env: BalloonEnv, steps: list[dict[str, object]]) -> None:
-    # Перезаписать JSONL текущего эпизода после сглаживания/replay.
-    writer = env._steps_writer  # noqa: SLF001, точка интеграции manual mode / writer
+    writer = env._steps_writer
     if writer is None:
         return
     writer.rewrite_current(steps)

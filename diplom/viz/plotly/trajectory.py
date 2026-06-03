@@ -1,12 +1,10 @@
-# Интерактивная 3D-визуализация траектории полёта аэростата (Plotly HTML).
-#
-# Публичный API:
+# Интерактивная 3D-визуализация траектории полёта аэростата (Plotly HTML)
+# Публичный API
 # compute_trajectory_bounds(episodes, extra_steps, margin) -> TrajectoryBounds
-# build_figure(episodes, title, bounds, wind_traces=...)  -> go.Figure
-# build_episode_traces(episode)                            -> List[go.BaseTraceType]
+# build_figure(episodes, title, bounds, wind_traces=...) -> go.Figure
+# build_episode_traces(episode) -> List[go.BaseTraceType]
 # apply_figure_layout(fig, title, bounds)
-# save_figure(fig, path)                                   -> standalone HTML
-# save_live_figure(fig, path, generation)                  -> live HTML + data slots
+# save_live_figure(fig, path, generation) -> live HTML + data slots
 
 from __future__ import annotations
 
@@ -21,7 +19,7 @@ import plotly.graph_objects as go
 from diplom.shared_constants import MAX_HEIGHT
 from diplom.world import WorldBounds
 
-# Цветовая палитра траекторий разных сред.
+# Цветовая палитра траекторий разных сред
 _TRAJ_PALETTE: List[str] = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
@@ -39,7 +37,7 @@ def _env_color(env_idx: int) -> str:
 # Типы данных
 @dataclass
 class EpisodeVizData:
-    # Данные одного эпизода для построения графика.
+    # Данные одного эпизода для построения графика
 
     env_idx: int
     steps: List[dict]       # каждый шаг: position, wind, action, reward, sim_time, ...
@@ -50,7 +48,7 @@ class EpisodeVizData:
 # TrajectoryBounds
 @dataclass
 class TrajectoryBounds:
-    # Ограничивающий параллелепипед траекторий, используется для масштаба осей.
+    # Ограничивающий параллелепипед траекторий, используется для масштаба осей
 
     xmin: float
     xmax: float
@@ -92,13 +90,11 @@ def compute_trajectory_bounds(
     min_z_span: float = 200.0,
     world_bounds: Optional[WorldBounds] = None,
 ) -> TrajectoryBounds:
-    # Границы bbox по позициям траекторий и целевым точкам.
-    #
-    # episodes, эпизоды с шагами; extra_steps, шаги текущего незавершённого эпизода.
-    # margin, относительный отступ от краёв (0.25 = 25% span).
-    # min_xy_span и min_z_span, минимальный размах осей (м).
-    # world_bounds, границы мира из датасета для синхронизации сцены.
-    #
+    # Границы bbox по позициям траекторий и целевым точкам
+    # episodes, эпизоды с шагами; extra_steps, шаги текущего незавершённого эпизода
+    # margin, относительный отступ от краёв (0.25 = 25% span)
+    # min_xy_span и min_z_span, минимальный размах осей (м)
+    # world_bounds, границы мира из датасета для синхронизации сцены
     if world_bounds is not None:
         return _bounds_from_world(world_bounds)
 
@@ -141,7 +137,6 @@ def compute_trajectory_bounds_from_positions(
     min_z_span: float = 200.0,
     world_bounds: Optional[WorldBounds] = None,
 ) -> TrajectoryBounds:
-    # Вычислить bbox только по списку координат (без загрузки полных шагов).
     if world_bounds is not None:
         return _bounds_from_world(world_bounds)
     return _bounds_from_positions(
@@ -162,7 +157,7 @@ def compute_trajectory_bounds_from_extents(
     min_z_span: float = 200.0,
     world_bounds: Optional[WorldBounds] = None,
 ) -> TrajectoryBounds:
-    # BBox по уже посчитанным min/max координат (без списка всех точек).
+    # BBox по уже посчитанным min/max координат (без списка всех точек)
     if world_bounds is not None:
         return _bounds_from_world(world_bounds)
     if min_xyz is None or max_xyz is None:
@@ -272,11 +267,9 @@ def build_figure(
     world_bounds: Optional[WorldBounds] = None,
     wind_traces: Optional[List[go.BaseTraceType]] = None,
 ) -> go.Figure:
-    # Интерактивный 3D-график траекторий.
-    #
-    # bounds вычисляется автоматически, если None. extra_steps учитываются в bbox.
-    # world_bounds синхронизирует сцену с датасетом. wind_traces рисуются под траекториями.
-    #
+    # Интерактивный 3D-график траекторий
+    # bounds вычисляется автоматически, если None. extra_steps учитываются в bbox
+    # world_bounds синхронизирует сцену с датасетом. wind_traces рисуются под траекториями
     if bounds is None:
         bounds = compute_trajectory_bounds(episodes, extra_steps, world_bounds=world_bounds)
 
@@ -295,7 +288,6 @@ def build_figure(
 
 
 def save_figure(fig: go.Figure, path: Path) -> None:
-    # Сохранить фигуру как standalone HTML (CDN Plotly, не встроен в файл).
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.write_html(str(path), include_plotlyjs="cdn")
 
@@ -331,7 +323,6 @@ def _wind_layer_js_url(html_path: Path) -> str:
 
 
 def write_wind_layer(html_path: Path, wind_traces: List[go.BaseTraceType], wind_key: int) -> bool:
-    # Записать статичный слой конусов ветра (один раз на wind_key).
     key_path = _wind_layer_key_path(html_path)
     layer_path = _wind_layer_path(html_path)
     key_str = str(wind_key)
@@ -394,7 +385,7 @@ def _write_live_trajectory_data(
     layout: dict,
     wind_key: int | None = None,
 ) -> None:
-    # Ping-pong слот только с траекториями (ветер, отдельный _wind.js).
+    # Ping-pong слот только с траекториями (ветер, отдельный _wind.js)
     slot = generation % 2
     path = _live_data_path(html_path, slot)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -425,7 +416,6 @@ def save_live_figure(
     generation: int,
     poll_interval_ms: int = DEFAULT_LIVE_POLL_INTERVAL_MS,
 ) -> None:
-    # Сохранить live-viewer: HTML-оболочка + ping-pong data.js (file://-safe).
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_live_data(fig, path, generation)
@@ -444,7 +434,6 @@ def save_live_trajectory_update(
     wind_key: int | None = None,
     poll_interval_ms: int = DEFAULT_LIVE_POLL_INTERVAL_MS,
 ) -> None:
-    # Обновить только траектории; конусы ветра пишутся отдельно и переиспользуются.
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     has_wind = wind_traces is not None and wind_key is not None
@@ -495,8 +484,8 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <style>
     html, body { margin: 0; height: 100%; background: rgb(15, 15, 25); overflow: hidden; }
-    #plot { width: 100vw; height: 100vh; }
-    #status {
+    # plot { width: 100vw; height: 100vh; }
+    # status {
       position: fixed; right: 12px; bottom: 10px; padding: 4px 10px; border-radius: 6px;
       background: rgba(30, 30, 30, 0.85); color: #aaa;
       font: 12px/1.4 system-ui, sans-serif; pointer-events: none;
@@ -786,11 +775,8 @@ def apply_figure_layout(
     title: str,
     bounds: Optional[TrajectoryBounds] = None,
 ) -> None:
-    # Применить layout с осями и камерой.
-    #
     # Если bounds передан, используем его для всех осей. Для X/Y это означает
-    # реальные границы мира, для Z, границы данных траекторий.
-    #
+    # реальные границы мира, для Z, границы данных траекторий
 
     if bounds is not None:
         x_range = [bounds.xmin, bounds.xmax]

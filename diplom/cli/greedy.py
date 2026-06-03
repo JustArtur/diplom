@@ -128,13 +128,12 @@ def greedy(
         help="Вес вертикальной дистанции в greedy-оценке",
     ),
 ) -> None:
-    # Запустить жадный контроллер и собрать траектории эпизодов.
     get_reward_fn(reward)
     get_obs_spec(obs)
 
     if open_trajectories and not trajectories:
         typer.echo(
-            "[ошибка] --open-trajectories требует включённых --trajectories",
+            "ошибка: --open-trajectories требует включённых --trajectories",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -218,7 +217,7 @@ def greedy(
         greedy=greedy_cfg,
         render=render,
         seed=seed,
-        open_trajectory_viz=open_trajectories,
+        open_trajectory_viz =open_trajectories,
     )
 
     serialized_results = [asdict(result) for result in results]

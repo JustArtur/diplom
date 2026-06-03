@@ -1,5 +1,3 @@
-# Reward no_z_stick: без z_stick.
-
 from __future__ import annotations
 
 import numpy as np

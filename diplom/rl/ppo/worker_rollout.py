@@ -1,5 +1,3 @@
-# PPO: policy + env.step в subprocess, rollout через shared memory.
-
 from __future__ import annotations
 
 from typing import Any
@@ -15,7 +13,6 @@ from diplom.rl.vec_env.policy_shmem_rollout import PolicyShmemSubprocVecEnv
 
 
 class WorkerRolloutPPO(PPO):
-    # PPO для PolicyShmemSubprocVecEnv (гибрид worker policy + rollout shmem).
 
     def collect_rollouts(
         self,

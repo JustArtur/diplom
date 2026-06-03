@@ -1,5 +1,3 @@
-# Фабрика для создания RL-среды из конфигурации.
-
 from __future__ import annotations
 
 from diplom.config import EnvironmentConfig, WindConfig
@@ -13,11 +11,8 @@ def build_env(
     wind_config: WindConfig,
     env_idx: int | None = None,
 ) -> BalloonEnv:
-    # Создать BalloonEnv с собственным WindInterpolator.
-    #
     # Возвращённая среда владеет интерполятором: вызов env.close() корректно
-    # освобождает ресурсы NetCDF-файла.
-    #
+    # освобождает ресурсы NetCDF-файла
     return BalloonEnv(
         env_config,
         build_wind_interpolator(wind_config, env_idx=env_idx),

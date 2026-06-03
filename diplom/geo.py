@@ -1,5 +1,3 @@
-# Геодезические и барометрические приближения (lat/lon в метры, высота и давление ISA).
-
 from __future__ import annotations
 
 import math
@@ -8,10 +6,7 @@ import numpy as np
 
 
 def altitude_to_pressure_hpa(height_m: np.ndarray) -> np.ndarray:
-    # Давление (гПа) по высоте через барометрическую формулу стандартной атмосферы (ISA).
-    #
-    # Ниже ~44.3 км: p(h) = p₀ · (1 − L·h / T₀) ^ (g·M / (R·L)).
-    #
+    # давление по высоте, ISA
     p0 = np.float32(1013.25)
     T0 = np.float32(288.15)
     g = np.float32(9.80665)
@@ -27,7 +22,6 @@ def altitude_to_pressure_hpa(height_m: np.ndarray) -> np.ndarray:
 
 
 def altitude_to_pressure_hpa_scalar(height_m: float) -> float:
-    # Scalar-версия altitude_to_pressure_hpa для hot path (одна точка).
     p0 = 1013.25
     t0 = 288.15
     g = 9.80665
@@ -44,13 +38,11 @@ def pressure_levels_within_altitude(
     pressure_hpa: np.ndarray,
     max_altitude_m: float,
 ) -> np.ndarray:
-    # Булева маска: True для уровней, чья эквивалентная высота ISA ≤ max_altitude_m.
     alt_m = pressure_hpa_to_altitude_m(np.asarray(pressure_hpa, dtype=np.float64))
     return alt_m <= float(max_altitude_m)
 
 
 def pressure_hpa_to_altitude_m(pressure_hpa: np.ndarray) -> np.ndarray:
-    # Высота (м) по давлению (гПа), обратная к altitude_to_pressure_hpa в диапазоне ISA.
     p0 = np.float32(1013.25)
     T0 = np.float32(288.15)
     g = np.float32(9.80665)
@@ -68,20 +60,10 @@ def pressure_hpa_to_altitude_m(pressure_hpa: np.ndarray) -> np.ndarray:
 
 
 def meters_per_deg_lat(latitude_deg: float) -> float:
-    # Приблизительное число метров в одном градусе широты (WGS84).
-    #
-    # Ряд Фурье по геодезической модели WGS-84:
-    # M(φ) ≈ 111132.92 − 559.82·cos(2φ) + 1.175·cos(4φ) − 0.0023·cos(6φ)
-    #
     lat_rad = math.radians(latitude_deg)
     return 111132.92 - 559.82 * math.cos(2 * lat_rad) + 1.175 * math.cos(4 * lat_rad) - 0.0023 * math.cos(6 * lat_rad)
 
 
 def meters_per_deg_lon(latitude_deg: float) -> float:
-    # Приблизительное число метров в одном градусе долготы (WGS84).
-    #
-    # Ряд Фурье по геодезической модели WGS-84:
-    # N(φ) ≈ 111412.84·cos(φ) − 93.5·cos(3φ) + 0.118·cos(5φ)
-    #
     lat_rad = math.radians(latitude_deg)
     return 111412.84 * math.cos(lat_rad) - 93.5 * math.cos(3 * lat_rad) + 0.118 * math.cos(5 * lat_rad)

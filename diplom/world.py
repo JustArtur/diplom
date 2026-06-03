@@ -1,5 +1,3 @@
-# Геометрия симуляционного мира, вычисляемая из ERA5-датасета.
-
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
@@ -12,13 +10,13 @@ from diplom.geo import meters_per_deg_lat, meters_per_deg_lon, pressure_hpa_to_a
 from diplom.shared_constants import MAX_HEIGHT, MIN_HEIGHT
 
 DEFAULT_TARGET_ALTITUDE = 18_000.0
-# Фиксированная стартовая высота аэростата (м AMSL).
+# стартовая высота шара, м AMSL
 DEFAULT_START_ALTITUDE = 100.0
 
 
 @dataclass(frozen=True, slots=True)
 class WorldBounds:
-    # Прямоугольные границы мира в локальных метрах (X/Y) и по высоте AMSL (Z).
+    # bbox мира: XY метры, Z AMSL
 
     x_min: float
     x_max: float
@@ -55,11 +53,7 @@ def world_bounds_from_axes(
         origin_lon: float,
         pressure_axis_hpa: np.ndarray | None = None,
 ) -> WorldBounds:
-    # Перевести диапазон широт и долгот в прямоугольник локальных метров.
-    #
-    # Если заданы уровни давления ERA5, вертикальный диапазон Z совпадает с их эквивалентом по ISA;
-    # иначе используются глобальные константы MIN_HEIGHT / MAX_HEIGHT.
-    #
+    # Z из уровней ERA5 по ISA, иначе MIN_HEIGHT / MAX_HEIGHT
     lat_min = float(np.min(latitude_axis_deg))
     lat_max = float(np.max(latitude_axis_deg))
     lon_min = float(np.min(longitude_axis_deg))
@@ -99,8 +93,8 @@ def log_world_bounds(
         origin_lat: float,
         origin_lon: float,
         wind_path: Path | str,
-        prefix: str = "[world]",
-        # flush: bool = True,
+        prefix: str = "world",
+        # flush: bool = True
 ) -> None:
 
     print(f"{prefix} Размеры мира из датасета · NetCDF {Path(wind_path)}: \\n"
@@ -111,14 +105,14 @@ def log_world_bounds(
 
 
 def default_initial_position(bounds: WorldBounds) -> np.ndarray:
-    # Базовая стартовая точка в центре мира на фиксированной высоте.
+    # старт в центре bbox на DEFAULT_START_ALTITUDE
     center_x, center_y = bounds.center
     z = float(np.clip(DEFAULT_START_ALTITUDE, bounds.z_min, bounds.z_max))
     return np.array([center_x, center_y, z], dtype=np.float32)
 
 
 def default_target_position(bounds: WorldBounds) -> np.ndarray:
-    # Базовая целевая точка в центре мира на рабочей высоте.
+    # цель в центре на DEFAULT_TARGET_ALTITUDE
     center_x, center_y = bounds.center
     z = float(np.clip(DEFAULT_TARGET_ALTITUDE, bounds.z_min, bounds.z_max))
     return np.array([center_x, center_y, z], dtype=np.float32)
@@ -129,12 +123,10 @@ def resolve_sim_time(
     *,
     time_min: np.datetime64,
 ) -> np.datetime64:
-    # Подставить начало временной оси ERA5, если момент старта не задан явно.
     return time_min if sim_time is None else sim_time
 
 
 def resolve_balloon_config(balloon: BalloonConfig, bounds: WorldBounds) -> BalloonConfig:
-    # Подставить координаты по умолчанию, если они не заданы явно.
     initial_position = (
         np.array(balloon.initial_position, dtype=np.float32)
         if balloon.initial_position is not None

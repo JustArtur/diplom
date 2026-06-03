@@ -1,5 +1,3 @@
-# Общие CLI-опции и сборка AppConfig для train/profile PPO.
-
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
@@ -211,7 +209,6 @@ def ppo_experiment_name(
     model_name: str,
     experiment_name: str | None = None,
 ) -> str:
-    # Имя run-а: явный --experiment или r-{reward}_o-{obs}_m-{model}.
     if experiment_name and experiment_name.strip():
         return experiment_name.strip()
     return f"r-{reward_name}_o-{obs_name}_m-{model_name}"
@@ -304,7 +301,7 @@ def balloon_config(start_time: datetime | None = None) -> BalloonConfig:
 
 
 def build_default_app_config(*, start_time: datetime | None = None) -> AppConfig:
-    # Минимальный AppConfig для viz/rollout без параметров обучения.
+    # Минимальный AppConfig для viz/rollout без параметров обучения
     return build_ppo_app_config(
         ppo_training_options(
             total_timesteps=DEFAULT_TIMESTEPS,

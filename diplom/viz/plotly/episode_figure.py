@@ -1,5 +1,3 @@
-# Сборка Plotly-фигур эпизодов: общая логика для rollout, live-render и placeholder.
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -30,7 +28,7 @@ WIND_OVERLAY_DEFAULTS: dict[str, Any] = {
     "show_colorbar": False,
 }
 
-# Live-рендер траекторий.
+# Live-рендер траекторий
 TRAJECTORY_LIVE_WIND_OVERLAY: dict[str, Any] = {
     **WIND_OVERLAY_DEFAULTS,
     "stride_lon": WIND_OVERLAY_DEFAULTS["stride_lon"] * 2,
@@ -119,7 +117,6 @@ def save_rollout_figure(
 
 
 def wind_overlay_cache_key(sim_time: np.datetime64) -> int:
-    # Ключ кэша слоя ветра: один слой конусов на каждый час ERA5.
     return int(np.datetime64(sim_time, "h").astype(np.int64))
 
 

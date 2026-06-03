@@ -65,7 +65,6 @@ def rollout(
     reward: str = REWARD_OPTION,
     obs: str = OBS_OPTION,
 ) -> None:
-    # Запустить rollout обученной модели и собрать траектории эпизодов.
     get_reward_fn(reward)
     get_obs_spec(obs)
     from diplom.sim.rollout import rollout_episodes

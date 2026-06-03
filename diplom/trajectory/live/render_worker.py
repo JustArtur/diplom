@@ -63,7 +63,7 @@ class TrajectoryRenderRequest:
 
 
 class MultiQueueRenderer:
-    # Round-robin рендер: у каждого queue_id своя очередь размера 1 (только актуальный снимок).
+    # round-robin по очередям, в каждой только последний снимок
 
     def __init__(self) -> None:
         self._queues: dict[str, queue.Queue[str]] = {}
@@ -144,7 +144,6 @@ def snapshot_path_for(
 
 
 def write_trajectory_snapshot(snapshot_path: Path, request: TrajectoryRenderRequest) -> None:
-    # Записать лёгкий снапшот (пути к JSONL + метаданные) на диск.
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = snapshot_path.with_suffix(".tmp")
     with tmp_path.open("wb") as handle:
@@ -166,7 +165,6 @@ def start_trajectory_render_worker(
     output_dir: Path,
     daemon: bool = True,
 ) -> tuple[Queue, Any]:
-    # Создать очередь и отдельный процесс для рендера траекторий.
     task_queue: Queue = ctx.Queue()
     process = ctx.Process(
         target=_render_worker_main,
@@ -178,7 +176,7 @@ def start_trajectory_render_worker(
 
 
 def start_shared_trajectory_render_server(*, ctx) -> tuple[Path, Any]:
-    # Один воркер рендера на несколько независимых train-ppo (Unix socket).
+    # общий воркер рендера для нескольких train-ppo
     socket_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"diplom-traj-render-{os.getpid()}.sock"
     socket_path.unlink(missing_ok=True)
     process = ctx.Process(
@@ -206,9 +204,7 @@ def stop_shared_trajectory_render_server(socket_path: Path, process: Any | None)
 
 
 def stop_trajectory_render_worker(task_queue: Queue | str | None, process: Any | None) -> None:
-    # Остановить процесс рендера, если он был запущен.
     if isinstance(task_queue, str):
-        # Общий socket-сервер (train-parallel-ppo) останавливается снаружи.
         return
 
     if task_queue is None or process is None:
@@ -231,7 +227,6 @@ def submit_trajectory_render(
     *,
     queue_id: str,
 ) -> None:
-    # Передать путь к файлу снапшота в очередь рендера (per-env, размер 1).
     if task_queue is None:
         return
 
@@ -240,7 +235,7 @@ def submit_trajectory_render(
         try:
             _submit_render_task(task_queue, task)
         except OSError as exc:
-            print(f"[trajectory_render] не удалось отправить снимок: {exc}", flush=True)  # noqa: T201
+            print(f"trajectory_render не удалось отправить снимок: {exc}", flush=True)
             snapshot_path.unlink(missing_ok=True)
         return
     try:
@@ -250,7 +245,6 @@ def submit_trajectory_render(
 
 
 def cleanup_snapshots_dir(output_dir: Path) -> None:
-    # Удалить каталог временных снапшотов после остановки воркера.
     snapshots_root = snapshots_dir(output_dir)
     if not snapshots_root.is_dir():
         return
@@ -263,7 +257,7 @@ def _discard_queued_snapshot(task: Any) -> None:
     if task == STOP_SENTINEL:
         return
     dropped = Path(str(task))
-    print(f"[trajectory_render] снимок отброшен (очередь переполнена): {dropped.name}", flush=True)  # noqa: T201
+    print(f"trajectory_render снимок отброшен (очередь переполнена): {dropped.name}", flush=True)
     dropped.unlink(missing_ok=True)
 
 
@@ -305,7 +299,6 @@ def _run_render_loop(
 
 
 def _render_worker_main(task_queue: Queue) -> None:
-    # Фоновый воркер, который строит HTML-файлы траекторий.
     from diplom.dev.profiling.cpu import (
         start_process_cprofile_if_enabled,
         stop_process_cprofile_if_running,
@@ -463,7 +456,6 @@ def _render_snapshot(
     request: TrajectoryRenderRequest,
     output_dir: Path,
 ) -> None:
-    # Построить и сохранить HTML для снимка траекторий.
     bounds = _snapshot_bounds(request)
     env_indices = sorted(
         set(request.history)

@@ -1,5 +1,3 @@
-# Obs default, 33 признака с probe-ветром.
-
 from __future__ import annotations
 
 import numpy as np

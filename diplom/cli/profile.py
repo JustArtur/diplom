@@ -103,21 +103,15 @@ def profile_ppo_mem(
     reward: str = REWARD_OPTION,
     obs: str = OBS_OPTION,
 ) -> None:
-    # Профиль памяти при обучении PPO (memray).
-    #
-    # Профилирование выключено, пока не передан хотя бы один флаг --profile-*.
-    # Каждый включённый процесс пишет свой файл в <logdir>/{датасет}/PPO_N/memray/<имя>.bin.
-    #
-    # CPU (время): diplom profile-ppo-cpu. Запускайте отдельно, совмещение сильно замедляет прогон.
-    #
+    # Профиль памяти при обучении PPO (memray)
+    # Профилирование выключено, пока не передан хотя бы один флаг --profile-*
+    # Каждый включённый процесс пишет свой файл в <logdir>/{датасет}/PPO_N/memray/<имя>.bin
+    # CPU (время): diplom profile-ppo-cpu. Запускайте отдельно, совмещение сильно замедляет прогон
     # Установка: poetry install --with dev
-    #
-    # 
     # diplom profile-ppo-mem -t 50000 -e 8 -f era5_... --profile-main --profile-envs
     # diplom profile-ppo-mem -t 50000 --profile-main
     # diplom profile-ppo-mem -t 50000 --single-process --profile-main
     # open profile_ppo/{датасет}/PPO_0/memray/main.html
-    #
     from diplom.dev.profiling.memory import MemrayProfileTargets
     from diplom.dev.profiling.runner import PROFILE_N_ENVS, MemrayNotFoundError, run_memray_train
 
@@ -238,18 +232,13 @@ def profile_ppo_cpu(
     reward: str = REWARD_OPTION,
     obs: str = OBS_OPTION,
 ) -> None:
-    # Профиль CPU (cProfile) при обучении PPO.
-    #
-    # Профилирование выключено, пока не передан хотя бы один флаг --profile-*.
-    # Каждый включённый процесс пишет свой файл в <logdir>/{датасет}/PPO_N/cprofile/<имя>.prof.
-    #
-    # Память: diplom profile-ppo-mem (memray). Запускайте отдельно от profile-ppo-cpu.
-    #
-    # 
+    # Профиль CPU (cProfile) при обучении PPO
+    # Профилирование выключено, пока не передан хотя бы один флаг --profile-*
+    # Каждый включённый процесс пишет свой файл в <logdir>/{датасет}/PPO_N/cprofile/<имя>.prof
+    # Память: diplom profile-ppo-mem (memray). Запускайте отдельно от profile-ppo-cpu
     # diplom profile-ppo-cpu -t 50000 -e 8 -f era5_... --profile-main --profile-envs
     # diplom profile-ppo-cpu -t 50000 --single-process --profile-main
     # snakeviz profile_ppo/{датасет}/PPO_0/cprofile/main.prof
-    #
     from diplom.dev.profiling.memory import MemrayProfileTargets
     from diplom.dev.profiling.runner import PROFILE_N_ENVS, run_cprofile_train
 

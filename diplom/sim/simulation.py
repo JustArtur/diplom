@@ -51,8 +51,8 @@ class Simulation:
         self.air_weight = np.float32(config.initial_air_weight)
 
         env_label = f"env_idx={self.env_idx}" if self.env_idx is not None else "env_idx=—"
-        print(  # noqa: T201, явный вывод конфигурации эпизода в CLI/лог
-            f"[Simulation] {env_label}: старт (x, y, z) м={self.position.tolist()}, "
+        print(
+            f"Simulation {env_label}: старт (x, y, z) м={self.position.tolist()}, "
             f"цель (x, y, z) м={self.target_position.tolist()}"
         )
 
@@ -102,8 +102,8 @@ class Simulation:
         env_label = f"env_{self.env_idx:03d}" if self.env_idx is not None else "env"
         warnings.warn(
             (
-                f"[{env_label}] Время симуляции вышло за пределы временного диапазона ERA5; "
-                f"будет клампиться к [{self._time_min}, {self._time_max}]."
+                f"{env_label} время симуляции вне ERA5, "
+                f"кламп к {self._time_min} .. {self._time_max}"
             ),
             RuntimeWarning,
             stacklevel=3,
@@ -126,13 +126,11 @@ class Simulation:
             self.vertical_speed = np.float32(limit)
 
     def snapshot(self) -> SimResult:
-        # Собрать текущее состояние без шага по времени.
         self._clamp_time()
         wind = self.interpolate_wind()
         return self._build_result(wind)
 
     def clone(self) -> "Simulation":
-        # Создать копию симуляции для lookahead без побочных эффектов.
         clone = object.__new__(Simulation)
         clone.wind_interp = self.wind_interp
         clone.world_bounds = self.world_bounds
@@ -163,14 +161,12 @@ class Simulation:
         return clone
 
     def step(self, dt: float, air_pump_speed: float) -> SimResult:
-        # Снос аэростата ветром (горизонтальный + вертикальный).
-        #
-        # Интегрирование методом Эйлера (первого порядка):
+        # Снос аэростата ветром (горизонтальный + вертикальный)
+        # Интегрирование методом Эйлера (первого порядка)
         # x(t+dt) = x(t) + v_x · HORIZONTAL_WIND_SCALE · dt
         # y(t+dt) = y(t) + v_y · HORIZONTAL_WIND_SCALE · dt
         # z(t+dt) = z(t) + v_z · dt
-        #
-        # np.datetime64 не умеет складываться с float; dt часто < 1 с (DEFAULT_DT=0.5).
+        # np.datetime64 не умеет складываться с float; dt часто < 1 с (DEFAULT_DT=0.5)
         self.sim_time += np.timedelta64(int(round(dt * 1000)), "ms")
         self._clamp_time()
         wind = self.interpolate_wind()
@@ -188,25 +184,23 @@ class Simulation:
             self._is_above_balloon_ceiling(float(proposed_z))
         )
 
-        # Ограничиваем саму высоту (не приращение) снизу и сверху границами вертикали датасета (ISA).
+        # Ограничиваем саму высоту (не приращение) снизу и сверху границами вертикали датасета (ISA)
         self._apply_position(float(proposed_x), float(proposed_y), float(proposed_z))
-        # Ограничиваем вертикальную скорость, чтобы предотвратить численный взрыв при сильном дисбалансе сил.
+        # Ограничиваем вертикальную скорость, чтобы предотвратить численный взрыв при сильном дисбалансе сил
         self._limit_vertical_speed()
 
         return self._build_result(wind)
 
     def gas_density(self, molar_mass: float, pressure: float, temperature: float) -> float:
-        # Из уравнения Менделеева-Клапейрона выводим формулу плотности газа:
+        # Из уравнения Менделеева-Клапейрона выводим формулу плотности газа
         # AIR_DENSITY = AIR_PRESSURE*AIR_MOLAR_MASS/(GAS_CONSTANT*AIR_TEMPERATURE(Kelvin))
-        #
         pressure_pa = np.float32(pressure) * np.float32(100.0)
         return np.float32((pressure_pa * molar_mass) / (GAS_CONSTANT * temperature))
 
     def _compute_vertical_speed(self, pressure: float, temperature: float, wz: float, dt: float) -> None:
-        # По второму закону Ньютона:
+        # По второму закону Ньютона
         # a = (F_archimedes - F_weight - F_drag) / m
-        #
-        # Физика баллона считается по плотности воздуха и силам Архимеда/тяжести/сопротивления.
+        # Физика баллона считается по плотности воздуха и силам Архимеда/тяжести/сопротивления
         self.air_density = np.float32(self.gas_density(AIR_MOLAR_MASS, pressure, temperature))
         total_mass = np.float32(BALLOON_WEIGHT) + self.air_weight
         archimedes_force = self.air_density * np.float32(GRAVITY_ACCELERATION) * np.float32(BALLOON_VOLUME)
@@ -217,7 +211,7 @@ class Simulation:
         self.vertical_speed = np.float32(self.vertical_speed + self.vertical_acceleration * dt + np.float32(wz))
 
     def _drag_force(self, air_density: float) -> float:
-        # Лобовое сопротивление по вертикали, направленное против движения.
+        # Лобовое сопротивление по вертикали, направленное против движения
         speed = float(self.vertical_speed)
         if abs(speed) < 1e-9:
             return 0.0
@@ -228,7 +222,6 @@ class Simulation:
         return self.wind_interp.vector_at(self.position[0], self.position[1], self.position[2], self.sim_time)
 
     def _build_result(self, wind: WindSample) -> SimResult:
-        # Собрать объект результата из текущего внутреннего состояния.
         self._wind_buf[0] = np.float32(wind.u * HORIZONTAL_WIND_SCALE)
         self._wind_buf[1] = np.float32(wind.v * HORIZONTAL_WIND_SCALE)
         self._wind_buf[2] = wind.w

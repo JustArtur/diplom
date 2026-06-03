@@ -1,5 +1,3 @@
-# Plotly-traces поля ветра (конусы) для переиспользования в wind-viz и trajectory overlay.
-
 from __future__ import annotations
 
 import colorsys
@@ -30,7 +28,7 @@ _CALM_RGB = "rgb(138,143,156)"
 
 
 def horizontal_azimuth_deg_east_north(u: np.ndarray, v: np.ndarray) -> np.ndarray:
-    # Горизонтальный азимут ветра: 0° = E, 90° = N, диапазон [0, 360).
+    # Горизонтальный азимут ветра: 0° = E, 90° = N, диапазон [0, 360)
     return np.mod(
         np.degrees(np.arctan2(np.asarray(v, dtype=np.float64), np.asarray(u, dtype=np.float64))),
         360.0,
@@ -38,7 +36,7 @@ def horizontal_azimuth_deg_east_north(u: np.ndarray, v: np.ndarray) -> np.ndarra
 
 
 def pressure_to_altitude_m(pressure_hpa: np.ndarray) -> np.ndarray:
-    # Обратная барометрическая формула ISA: давление (гПа) -> высота (м).
+    # Обратная барометрическая формула ISA: давление (гПа) -> высота (м)
     p0 = 1013.25
     t0 = 288.15
     lapse = 0.0065
@@ -72,7 +70,6 @@ def build_wind_cone_traces(
     cone_opacity: float = 1.0,
     cone_scale: float = 1.0,
 ) -> list[go.BaseTraceType]:
-    # Построить Plotly Cone-traces поля ветра на 3D-сетке ERA5.
     plot_time = np.datetime64(time, "ns")
     lat_axis = np.asarray(interpolator.latitude_axis_deg, dtype=np.float64)
     lon_axis = np.asarray(interpolator.longitude_axis_deg, dtype=np.float64)

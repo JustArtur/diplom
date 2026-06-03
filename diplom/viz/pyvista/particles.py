@@ -1,5 +1,3 @@
-# Частицы-трассеры для визуализации ветрового поля вокруг аэростата.
-
 from __future__ import annotations
 
 import numpy as np
@@ -17,11 +15,9 @@ from .constants import (
 
 
 class WindParticles:
-    # Частицы, визуализирующие ветровое поле штрихами (streak lines).
-    #
+    # Частицы, визуализирующие ветровое поле штрихами (streak lines)
     # Частицы живут в диске радиуса VISIBLE_RADIUS вокруг аэростата
-    # и респавнятся при выходе за его границы.
-    #
+    # и респавнятся при выходе за его границы
 
     def __init__(self, center: np.ndarray, wind_interpolator: WindInterpolator, time: np.datetime64) -> None:
         self.n_total = NUM_PARTICLES  # количество частиц
@@ -44,7 +40,7 @@ class WindParticles:
 
     # Вспомогательные
     def _z_bounds(self, center_z: float) -> tuple[float, float]:
-        # Допустимый диапазон высот [lo, hi] для спавна и отсечения.
+        # Допустимый диапазон высот [lo, hi] для спавна и отсечения
         wb = self._wind_interpolator.world_bounds
         lo = max(center_z - VISIBLE_Z_RANGE, wb.z_min)
         hi = min(center_z + VISIBLE_Z_RANGE, wb.z_max)
@@ -53,11 +49,9 @@ class WindParticles:
         return lo, hi
 
     def _random_disk(self, n: int) -> tuple[np.ndarray, np.ndarray]:
-        # Равномерное распределение *n* точек на диске радиуса VISIBLE_RADIUS.
-        #
-        # r = √u · R, корень компенсирует рост площади круга (~ r²),
-        # чтобы плотность по площади была равномерной.
-        #
+        # Равномерное распределение *n* точек на диске радиуса VISIBLE_RADIUS
+        # r = √u · R, корень компенсирует рост площади круга (~ r²)
+        # чтобы плотность по площади была равномерной
         angles = np.random.uniform(0, 2 * np.pi, n)  # Определяем угол
         # Определяем радиус (корень для равномерного распределения, иначе будет больше плотности в центре)
         radii = np.sqrt(np.random.uniform(0, 1, n)) * VISIBLE_RADIUS
@@ -65,7 +59,7 @@ class WindParticles:
 
     # Ветер
     def _sample_wind(self) -> None:
-        # Сэмплировать ветер в текущих позициях частиц через WindInterpolator.
+        # Сэмплировать ветер в текущих позициях частиц через WindInterpolator
         vec = self._wind_interpolator.batch_vector_at(
             self.position[:, 0],
             self.position[:, 1],
@@ -76,7 +70,6 @@ class WindParticles:
 
     # Спавн
     def _spawn_all(self) -> None:
-        # Создать начальные позиции всех частиц вокруг центра.
         cx, cy, cz = self._center
         z_lo, z_hi = self._z_bounds(cz)
 
@@ -86,9 +79,7 @@ class WindParticles:
         zs = np.random.uniform(z_lo, z_hi, self.n_total)
         self.position = np.column_stack([xs, ys, zs])
 
-    # Шаг симуляции
     def step(self, center: np.ndarray, time: np.datetime64) -> None:
-        # Продвинуть частицы по ветру, респавнить вышедшие, обновить меш.
         self._time = time
         center = np.array(center, dtype=np.float32)
         self._display_origin = np.asarray(center, dtype=np.float64)
@@ -123,25 +114,22 @@ class WindParticles:
 
     # Меш (приватные)
     def _build_mesh(self) -> pv.PolyData:
-        # Создать новый PolyData со штрихами (вызывается один раз).
         pts, speed = self._streak_data()
         mesh = pv.PolyData(pts, lines=self._lines)
         mesh["speed"] = speed
         return mesh
 
     def _update_mesh(self) -> None:
-        # Обновить существующий меш in-place (без пересоздания VTK-актора).
         pts, speed = self._streak_data()
         self.mesh.points = pts
         self.mesh["speed"] = speed
         self.mesh.Modified()
 
     def _positions_for_display(self) -> np.ndarray:
-        # Мировые координаты -> сцена (origin в позиции аэростата).
+        # Мировые координаты -> сцена (origin в позиции аэростата)
         return self.position.astype(np.float64) - self._display_origin
 
     def _streak_data(self) -> tuple[np.ndarray, np.ndarray]:
-        # Вычислить пары точек [голова, хвост] и скаляры скорости ветра.
         wx, wy, wz = self._last_wind
         pos = self._positions_for_display()
         pts = np.empty((2 * self.n_total, 3))

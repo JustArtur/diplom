@@ -1,5 +1,3 @@
-# Policy и env в воркере; rollout-буфер в shared memory без pickle чанка.
-
 from __future__ import annotations
 
 import multiprocessing as mp
@@ -313,7 +311,7 @@ def _policy_shmem_rollout_worker(
 
 
 class PolicyShmemSubprocVecEnv(VecEnv):
-    # Policy rollout в воркерах; массивы rollout в shared memory, pipe, только сигнал.
+    # Policy rollout в воркерах; массивы rollout в shared memory, pipe, только сигнал
 
     def __init__(
         self,
@@ -442,7 +440,7 @@ class PolicyShmemSubprocVecEnv(VecEnv):
         step_idx: int,
         n_steps: int,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[dict[str, Any]], np.ndarray]:
-        # Срез rollout по шагу из shared memory (без pickle).
+        # Срез rollout по шагу из shared memory (без pickle)
         infos: list[dict[str, Any]] = []
         for env_idx in range(self.num_envs):
             info = self._info_dict(env_idx, step_idx)

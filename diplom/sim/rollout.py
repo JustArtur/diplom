@@ -39,7 +39,7 @@ def rollout_episodes(
         origin_lat=env.wind_interp.origin_lat,
         origin_lon=env.wind_interp.origin_lon,
         wind_path=config.wind.path,
-        prefix="[rollout]",
+        prefix="rollout",
     )
     device = resolve_torch_device(config.training.device)
     model = (
@@ -82,7 +82,7 @@ def rollout_episodes(
                 )
 
                 if render:
-                    print(env.render())  # noqa: T201 - CLI вывод
+                    print(env.render())
 
             target_position = traj[-1]["target_position"] if traj else []
             results.append(

@@ -1,5 +1,3 @@
-# Сводка ключевых метрик из CSV, экспортированного из TensorBoard.
-
 from __future__ import annotations
 
 import csv
@@ -11,7 +9,6 @@ from pathlib import Path
 SUMMARY_TXT_SUFFIX = ".summary.txt"
 SUMMARY_JSON_SUFFIX = ".summary.json"
 
-# Метрики PPO / rollout, берём как есть из TB.
 CORE_TAGS: tuple[str, ...] = (
     "rollout/ep_rew_mean",
     "rollout/ep_len_mean",
@@ -26,7 +23,6 @@ CORE_TAGS: tuple[str, ...] = (
     "time/fps",
 )
 
-# Усредняем по env_0, env_1, … на каждом step.
 ENV_AGGREGATE_SUFFIXES: tuple[str, ...] = (
     "distance_to_target",
     "horizontal_distance",
@@ -109,7 +105,6 @@ def _aggregate_env_series(
 
 
 def analyze_scalars_csv(csv_path: Path) -> ScalarsSummary:
-    # Построить сводку по *.scalars.csv.
     csv_path = csv_path.resolve()
     if not csv_path.is_file():
         raise FileNotFoundError(f"Не найден CSV: {csv_path}")
@@ -230,7 +225,6 @@ def _summary_paths(csv_path: Path) -> tuple[Path, Path]:
 
 
 def write_scalars_summary(csv_path: Path) -> tuple[Path, Path]:
-    # Записать .scalars.summary.txt и .scalars.summary.json рядом с CSV.
     summary = analyze_scalars_csv(csv_path)
     txt_path, json_path = _summary_paths(csv_path)
 

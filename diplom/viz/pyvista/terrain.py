@@ -1,5 +1,3 @@
-# Локальный рельеф и декорации (кусты) для PyVista-визуализации.
-
 from __future__ import annotations
 
 import numpy as np
@@ -25,7 +23,7 @@ from .constants import (
 
 
 def terrain_height_at(x: np.ndarray | float, y: np.ndarray | float) -> np.ndarray | float:
-    # Высота синтетического рельефа в метрах (та же формула, что у плоскости земли).
+    # Высота синтетического рельефа в метрах (та же формула, что у плоскости земли)
     return (
         TERRAIN_AMP_SIN * np.sin(np.asarray(y) * TERRAIN_FREQ_SIN)
         + TERRAIN_AMP_COS * np.cos(np.asarray(x) * TERRAIN_FREQ_COS)
@@ -33,7 +31,7 @@ def terrain_height_at(x: np.ndarray | float, y: np.ndarray | float) -> np.ndarra
 
 
 def build_terrain_plane() -> pv.PolyData:
-    # Зелёная плоскость с лёгким рельефом в локальных координатах сцены.
+    # Зелёная плоскость с лёгким рельефом в локальных координатах сцены
     plane = pv.Plane(
         center=(0.0, 0.0, 0.0),
         i_size=TERRAIN_PATCH_SIZE_M,
@@ -61,7 +59,7 @@ def _single_bush(
     y: float,
     rng: np.random.Generator,
 ) -> list[pv.DataSet]:
-    # Один куст: цилиндр-ствол и несколько конусов листвы.
+    # Один куст: цилиндр-ствол и несколько конусов листвы
     z = float(terrain_height_at(x, y))
     scale = float(rng.uniform(BUSH_SCALE_MIN, BUSH_SCALE_MAX))
     height = scale * float(rng.uniform(5.0, 9.0))
@@ -97,7 +95,7 @@ def _single_bush(
 
 
 def build_bushes_mesh(seed: int = BUSH_SEED) -> pv.PolyData:
-    # Случайные кусты в кольце вокруг аэростата (хорошо видны с камеры).
+    # Случайные кусты в кольце вокруг аэростата (хорошо видны с камеры)
     rng = np.random.default_rng(seed)
     exclude_r = BUSH_EXCLUDE_RADIUS_M
     place_r = BUSH_PLACE_RADIUS_M

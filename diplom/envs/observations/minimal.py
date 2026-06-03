@@ -1,5 +1,3 @@
-# Obs minimal, 24 признака без probe-ветра.
-
 from __future__ import annotations
 
 import numpy as np

@@ -1,5 +1,3 @@
-# Интерактивная 3D-визуализация стратосферного аэростата в ветровом поле.
-
 from __future__ import annotations
 
 import time
@@ -36,12 +34,10 @@ from diplom.sim.simulation import SimResult, Simulation
 
 
 class BalloonSimulation:
-    # Интерактивная визуализация стратостата в ветровом поле (PyVista).
-    #
+    # Интерактивная визуализация стратостата в ветровом поле (PyVista)
     # Координаты ERA5 в локальных метрах достигают миллионов по X/Y, в VTK/OpenGL
-    # при таких значениях теряется точность. Все объекты рисуются в системе,
-    # привязанной к текущей позиции аэростата (аэростат в начале координат).
-    #
+    # при таких значениях теряется точность. Все объекты рисуются в системе
+    # привязанной к текущей позиции аэростата (аэростат в начале координат)
 
     def __init__(
         self,
@@ -83,7 +79,7 @@ class BalloonSimulation:
         self._sync_scene()
 
     def _scene_origin(self) -> np.ndarray:
-        # Мировая позиция аэростата -> начало координат сцены.
+        # Мировая позиция аэростата -> начало координат сцены
         return self.position.copy()
 
     def _to_scene(self, world: np.ndarray) -> np.ndarray:
@@ -98,7 +94,7 @@ class BalloonSimulation:
         self._init_camera()
 
     def _build_terrain(self) -> None:
-        # Локальный зелёный патч с рельефом и кустами.
+        # Локальный зелёный патч с рельефом и кустами
         self._terrain_actor = self.plotter.add_mesh(
             build_terrain_plane(),
             scalars="colors",
@@ -119,7 +115,7 @@ class BalloonSimulation:
             )
 
     def _build_balloon(self) -> None:
-        # Аэростат в начале координат сцены.
+        # Аэростат в начале координат сцены
         sphere = pv.Sphere(radius=BALLOON_RADIUS, center=(0, 0, 0))
         rope = pv.Line((0, 0, ROPE_TOP_Z), (0, 0, ROPE_BOTTOM_Z))
         basket = pv.Cube(
@@ -168,7 +164,6 @@ class BalloonSimulation:
         actor.position = xyz
 
     def _sync_terrain_position(self) -> None:
-        # Уровень земли (z=0 м AMSL) в координатах сцены.
         ground_z = -float(self.position[2])
         ground_pos = (0.0, 0.0, ground_z)
         if self._terrain_actor is not None:
@@ -277,7 +272,7 @@ class BalloonSimulation:
         )
 
     def _register_interactor_observers(self) -> None:
-        # Подписки на interactor: отпускание клавиш, рендер, ручная камера.
+        # Подписки на interactor: отпускание клавиш, рендер, ручная камера
         iren = self.plotter.iren
         if iren is None:
             return
@@ -320,7 +315,7 @@ class BalloonSimulation:
         self._do_tick()
 
     def _on_render(self, *_args) -> None:
-        # Второй цикл обновления: анимация не замирает при вращении камеры.
+        # Второй цикл обновления: анимация не замирает при вращении камеры
         self._do_tick(emit_render=False)
 
     def _do_tick(self, *, emit_render: bool = True) -> None:

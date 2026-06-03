@@ -1,5 +1,3 @@
-# Параллельный запуск нескольких train-ppo с общим воркером рендера траекторий.
-
 from __future__ import annotations
 
 import os
@@ -19,7 +17,7 @@ RUNNER_TOKEN = "runner"
 
 
 def parse_train_parallel_argv(argv: list[str]) -> tuple[list[str], list[list[str]]]:
-    # Разбить argv на глобальные опции и списки аргументов для каждого run.
+    # Разбить argv на глобальные опции и списки аргументов для каждого run
     global_args: list[str] = []
     runs: list[list[str]] = []
     current: list[str] | None = None
@@ -69,7 +67,6 @@ def _parse_jobs(global_args: list[str]) -> tuple[int, list[str]]:
 
 
 def run_train_parallel_ppo(argv: list[str]) -> int:
-    # Запустить несколько train-ppo; один subprocess рендера траекторий на все run.
     from diplom.data.era5_manifest import expand_training_manifest_argv
 
     argv = expand_training_manifest_argv(argv)
@@ -110,8 +107,8 @@ def run_train_parallel_ppo(argv: list[str]) -> int:
                 done.append(run_idx)
                 if code != 0:
                     exit_code = code
-                    typer_echo = f"[train-parallel-ppo] run #{run_idx + 1} завершился с кодом {code}"
-                    print(typer_echo, file=sys.stderr)  # noqa: T201
+                    typer_echo = f"train-parallel-ppo run #{run_idx + 1} завершился с кодом {code}"
+                    print(typer_echo, file=sys.stderr)
 
             for run_idx in done:
                 del active[run_idx]

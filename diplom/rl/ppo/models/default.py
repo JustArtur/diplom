@@ -1,5 +1,3 @@
-# PPO default: MlpPolicy 128-128.
-
 from __future__ import annotations
 
 from dataclasses import dataclass

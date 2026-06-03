@@ -1,5 +1,3 @@
-# Экспорт scalar-метрик TensorBoard в CSV рядом с файлом событий.
-
 from __future__ import annotations
 
 import csv
@@ -24,7 +22,7 @@ class ExportResult:
 
 
 def _scalar_from_summary_value(value: object) -> float | None:
-    # SB3/TensorBoard 2.x часто пишет scalars как tensor, не simple_value.
+    # иногда scalar лежит в tensor, не в simple_value
     if value.HasField("simple_value"):  # type: ignore[attr-defined]
         return float(value.simple_value)  # type: ignore[attr-defined]
     if value.HasField("tensor"):  # type: ignore[attr-defined]
@@ -54,7 +52,6 @@ def export_event_file(
     output_path: Path | None = None,
     write_summary: bool = True,
 ) -> ExportResult:
-    # Пишет {event_file}.scalars.csv рядом с исходным файлом.
     from diplom.dev.tensorboard.summary import write_scalars_summary
 
     event_path = event_path.resolve()
@@ -103,7 +100,7 @@ def export_tensorboard_path(
     recursive: bool = True,
     write_summary: bool = True,
 ) -> list[ExportResult]:
-    # Экспортирует все events.out.tfevents.* под path (или один файл).
+    # Экспортирует все events.out.tfevents.* под path (или один файл)
     event_files = find_event_files(path, recursive=recursive)
     if not event_files:
         raise FileNotFoundError(
