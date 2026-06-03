@@ -1,34 +1,4 @@
-"""Obs ``minimal`` — упрощённый вектор без probe-слоёв.
-
-CLI: ``--obs minimal``   OBS_DIM = 24
-
-Структура вектора
------------------
-[0:3]   position
-[3:6]   target_position
-[6:9]   delta
-[9:12]  wind (u, v, w) — только текущая высота
-[12:19] физика: energy, air_weight, v, a, density, temp, pressure  (7 скаляров)
-[19]    wind_toward — текущий слой
-[20:22] nav: [dist_xy / 50km, best_ratio]
-[22:24] temporal: [adverse_wind_steps/1k, Δwind_toward/scale]
-
-Отличия от ``default``
-----------------------
-- Нет probe_winds[8] — ``wind_interp`` не используется.
-- Нет layer gradient (3-й temporal признак).
-- OBS_DIM = 24 vs 33.
-
-Когда использовать
-------------------
-Отдельный эксперимент с меньшим входом MLP (и train, и rollout с ``--obs minimal``).
-
-Совместимость чекпоинтов
-------------------------
-Размер входа сети фиксируется при обучении. Чекпоинт с ``--obs default`` (33)
-нельзя загрузить с ``--obs minimal`` (24) — и наоборот. При resume/rollout
-нужен тот же ``--obs``, что при train.
-"""
+# Obs minimal, 24 признака без probe-ветра.
 
 from __future__ import annotations
 

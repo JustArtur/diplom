@@ -1,4 +1,4 @@
-"""HUD (heads-up display) для визуализации аэростата."""
+# HUD (heads-up display) для визуализации аэростата.
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from .constants import HUD_FONT_FILE
 
 @dataclass(frozen=True)
 class HudState:
-    """Иммутабельный снимок состояния симуляции для отрисовки HUD."""
+    # Иммутабельный снимок состояния симуляции для отрисовки HUD.
 
     position: np.ndarray                    # позиция аэростата [x, y, z] (м)
     target_position: np.ndarray             # позиция цели [x, y, z] (м)
@@ -28,7 +28,7 @@ class HudState:
 
 
 class BalloonHUD:
-    """Текстовый HUD, отображаемый поверх 3D-сцены PyVista."""
+    # Текстовый HUD, отображаемый поверх 3D-сцены PyVista.
 
     def __init__(
         self,
@@ -48,7 +48,7 @@ class BalloonHUD:
         self._clock = clock
 
     def update(self, state: HudState) -> None:
-        """Перерисовать HUD с актуальным состоянием."""
+        # Перерисовать HUD с актуальным состоянием.
         kwargs: dict = {}
         if HUD_FONT_FILE is not None:
             kwargs["font_file"] = HUD_FONT_FILE
@@ -63,14 +63,14 @@ class BalloonHUD:
         )
 
     def _format(self, state: HudState) -> str:
-        """Сформировать строку HUD из состояния симуляции."""
+        # Сформировать строку HUD из состояния симуляции.
         elapsed = self._clock() - state.start_monotonic
         dist = float(np.linalg.norm(state.target_position - state.position))
 
         wx, wy, wz = (float(state.wind[0]), float(state.wind[1]), float(state.wind[2]))
-        # |V_h| = √(u² + v²) — модуль горизонтальной скорости ветра
+        # |V_h| = √(u² + v²), модуль горизонтальной скорости ветра
         horiz_speed = float(np.hypot(wx, wy))
-        # θ = atan2(u, v) — азимут (курс) ветра, 0° = север, по часовой
+        # θ = atan2(u, v), азимут (курс) ветра, 0° = север, по часовой
         bearing = (float(np.degrees(np.arctan2(wx, wy))) + 360.0) % 360.0
         vert_arrow = "\u2191" if wz >= 0 else "\u2193"
         vert_str = f"{vert_arrow}{abs(wz):.2f}"

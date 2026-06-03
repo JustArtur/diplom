@@ -1,20 +1,4 @@
-"""Reward ``weak_z_stick`` — полный reward с мягким z_stick.
-
-CLI: ``--reward weak_z_stick``
-
-Отличия от полного reward
-----------------------
-- ``Z_STICK_WINDOW_STEPS = 10_000`` (было 50_000).
-- ``Z_STICK_PENALTY = 0.01`` (было 0.03).
-- ``Z_STICK_MIN_STD_M = 200`` — без изменений.
-
-distance_regression и остальные термы — как в полном reward.
-
-Когда использовать
-------------------
-A/B: z_stick включён, но слабее и на более коротком окне — проверить,
-можно ли сохранить анти-«залипание» без подавления exploration.
-"""
+# Reward weak_z_stick: полный reward, но мягче z_stick.
 
 from __future__ import annotations
 

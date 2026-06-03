@@ -77,7 +77,7 @@ class BalloonConfig:
     # Базовая целевая точка, к которой должен стремиться агент.
     # Если не задана, будет подставлена из географических границ датасета.
     target_position: np.ndarray | None = None
-    # Стартовое модельное время для запроса ветра; None — первый шаг времени из ERA5.
+    # Стартовое модельное время для запроса ветра; None, первый шаг времени из ERA5.
     sim_time: np.datetime64 | None = None
 
 
@@ -101,7 +101,7 @@ class DownloadConfig:
     pressure_levels: tuple[str, ...] = DEFAULT_PRESSURE_LEVELS
     # Список переменных ERA5, которые нужно скачать.
     variables: tuple[str, ...] = DEFAULT_VARIABLES
-    # Шаг по часам в запросе CDS: 1 — все 24 ч, 2 — 00:00, 02:00, …, 22:00.
+    # Шаг по часам в запросе CDS: 1, все 24 ч, 2, 00:00, 02:00, …, 22:00.
     hour_step: int = 24
 
 
@@ -148,7 +148,7 @@ class EnvironmentConfig:
     train_max_episode_steps: int = TRAIN_MAX_EPISODE_STEPS
     # Делить компоненты obs на фиксированные масштабы (совместимо с worker rollout).
     normalize_observations: bool = True
-    # Каталог JSONL-шагов для HTML-траекторий; None — не писать шаги на диск.
+    # Каталог JSONL-шагов для HTML-траекторий; None, не писать шаги на диск.
     trajectory_steps_dir: Path | None = None
     # Сохранять ли observation, из которого был выбран action.
     # Нужен для демонстраций и pretraining, но для обычного train обычно не требуется.
@@ -158,7 +158,7 @@ class EnvironmentConfig:
     trajectory_max_history: int = 3
     # Показывать конусы ветра на HTML-графике траекторий.
     trajectory_show_wind_cones: bool = False
-    # True — один trajectories.html на всё обучение; False — env_XXX.html на каждый env.
+    # True, один trajectories.html на всё обучение; False, env_XXX.html на каждый env.
     trajectory_combined_html: bool = True
     # Имя reward-функции из diplom.envs.rewards (флаг CLI --reward).
     reward_name: str = "simple"
@@ -176,11 +176,11 @@ class SimulationConfig:
 
 @dataclass(frozen=True, slots=True)
 class EpisodeLengthCurriculumStage:
-    """Этап куррикулума длины эпизода.
-
-    Активен, пока ``from_timesteps <= num_timesteps < until_timesteps``.
-    ``until_timesteps=None`` — без верхней границы (только последний этап).
-    """
+    # Этап куррикулума длины эпизода.
+    #
+    # Активен, пока from_timesteps <= num_timesteps < until_timesteps.
+    # until_timesteps=None, без верхней границы (только последний этап).
+    #
 
     from_timesteps: int
     until_timesteps: int | None
@@ -205,7 +205,7 @@ class TrainingConfig:
     total_timesteps: int = 20_000_000
     # Seed для воспроизводимости.
     seed: int = 0
-    # Родительский каталог run-ов; артефакты — {logdir}/{experiment_name|датасет}/PPO_N/.
+    # Родительский каталог run-ов; артефакты, {logdir}/{experiment_name|датасет}/PPO_N/.
     logdir: Path = Path("ppo")
     # Родительский каталог для profile-ppo-mem / profile-ppo-cpu.
     profile_logdir: Path = Path("profile_ppo")
@@ -214,13 +214,13 @@ class TrainingConfig:
     n_envs: int = 2
     # Устройство для нейросети PPO: cpu | cuda | mps (см. diplom.torch_device.resolve_torch_device).
     device: str = "cpu"
-    # Уровень логирования PPO в консоль (как verbose в Stable-Baselines3): 0 — тихо, 1 — таблица метрик.
+    # Уровень логирования PPO в консоль (как verbose в Stable-Baselines3): 0, тихо, 1, таблица метрик.
     verbose: int = 1
     # Имя PPO-модели из diplom.rl.ppo.models (флаг CLI --model).
     model_name: str = "default"
     # n_steps PPO на среду за rollout (должен совпадать с n_steps в PPO(...)).
     ppo_n_steps: int = 4096
-    # Энтропийный коэффициент PPO (меньше — меньше раздувается log_std).
+    # Энтропийный коэффициент PPO (меньше, меньше раздувается log_std).
     ent_coef: float = 0.008
     ent_coef_start: float = 0.02
     ent_coef_end: float = 0.008
@@ -229,9 +229,9 @@ class TrainingConfig:
     learning_rate: float = 1e-4
     # Ограничение нормы градиента (стабильность при всплесках KL).
     max_grad_norm: float = 0.3
-    # Имя run-а; пустой CLI --experiment → r-{reward}_o-{obs}_m-{model}.
+    # Имя run-а; пустой CLI --experiment -> r-{reward}_o-{obs}_m-{model}.
     experiment_name: str | None = None
-    # Этапы куррикулума длины эпизода: (from_ts, until_ts, max_episode_steps); until_ts=None — навсегда.
+    # Этапы куррикулума длины эпизода: (from_ts, until_ts, max_episode_steps); until_ts=None, навсегда.
     episode_length_curriculum_enabled: bool = True
     episode_length_curriculum_stages: tuple[EpisodeLengthCurriculumStageInput, ...] = (
         DEFAULT_EPISODE_LENGTH_CURRICULUM_STAGES
@@ -249,7 +249,7 @@ class VisualizationConfig:
     bg_bottom: str = "deepskyblue"
     # Верхний цвет фона сцены.
     bg_top: str = "midnightblue"
-    # Время старта визуализации; None — первый шаг времени из ERA5.
+    # Время старта визуализации; None, первый шаг времени из ERA5.
     sim_start_time: np.datetime64 | None = None
 
 

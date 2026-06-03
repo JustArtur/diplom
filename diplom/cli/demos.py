@@ -27,7 +27,7 @@ def export_demonstrations(
         help="Ограничить число эпизодов, попавших в экспорт",
     ),
 ) -> None:
-    """Экспортировать успешные JSONL-эпизоды в компактный npz для BC/pretraining."""
+    # Экспортировать успешные JSONL-эпизоды в компактный npz для BC/pretraining.
     try:
         summary = export_demo_dataset(source, output, max_episodes=max_episodes)
     except ValueError as exc:

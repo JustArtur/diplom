@@ -1,33 +1,4 @@
-"""PPO-модель ``default`` — feed-forward MlpPolicy.
-
-CLI: ``--model default``
-
-Архитектура
------------
-- Policy: ``MlpPolicy`` (Stable-Baselines3 PPO).
-- Actor (pi): Linear → [128] → ReLU → [128] → ReLU → action mean.
-- Critic (vf): Linear → [128] → ReLU → [128] → ReLU → value.
-- Action: 1D continuous (кг/с накачки), Gaussian с learnable log_std.
-
-Гиперпараметры политики
------------------------
-- ``NET_ARCH = {"pi": [128, 128], "vf": [128, 128]}``
-- ``LOG_STD_INIT = -1.5``  → σ ≈ 0.22 на старте.
-- ``LOG_STD_MIN = -1.609`` → σ ≥ 0.20 (ClipLogStdCallback).
-- ``LOG_STD_MAX = -0.693`` → σ ≤ 0.50.
-
-Память
-------
-Нет — Markov: obs на одном шаге должно содержать всю нужную информацию
-(probe-ветер, temporal фичи из RewardState).
-
-Совместимость
---------------
-- obs: ``default`` (33) или ``minimal`` (24) — любой Box obs_dim.
-- reward: любая ``--reward`` (не влияет на архитектуру сети).
-
-Экспорт: ``SPEC`` — передаётся в runner при создании PPO(...).
-"""
+# PPO default: MlpPolicy 128-128.
 
 from __future__ import annotations
 

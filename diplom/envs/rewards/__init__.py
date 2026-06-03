@@ -1,33 +1,6 @@
-"""Реестр reward-функций: ``diplom.envs.rewards.<name>`` → ``compute_reward``.
-
-Каждый модуль — самостоятельная reward-модель с полной логикой (без общего _core).
-Выбор: ``diplom train-ppo --reward <name>`` или ``diplom rollout --reward <name>``.
-
-Общий контракт
---------------
-``compute_reward(wind_interp, step, ctx, state) -> RewardResult``
-
-- ``wind_interp`` — WindInterpolator ERA5; зарезервирован для термов с пробами
-  ветра по высоте (пока в большинстве моделей не используется).
-- ``step`` — SimResult после ``sim.step()`` (позиция, ветер на текущей Z, цель, …).
-- ``ctx`` — RewardStepContext: previous_position, action, energy_delta, boundary,
-  лимиты эпизода (см. ``types.py``).
-- ``state`` — RewardState: память эпизода между шагами (best distance, z_window, …).
-
-Модуль может экспортировать (опционально, для BalloonEnv):
-- ``WIND_ALIGN_SCALE`` — масштаб wind_toward в obs temporal-фичах.
-- ``Z_STICK_WINDOW_STEPS`` — длина окна z_stick и maxlen deque в RewardState.
-
-Доступные модели
-----------------
-simple           — навигация, ветер, энергия; без «мешающих» термов (дефолт)
-pbrs             — PBRS по 3D-дистанции + probe-слои; энергия только без Δz
-long_horizon     — PBRS + усиленный ветер/scan; слабый штраф за drift (долгий горизонт)
-goal_only        — sparse reward только за достижение цели
-no_regression    — полный reward без distance_regression
-no_z_stick       — полный reward без z_stick (офлайн-симуляции)
-weak_z_stick     — полный reward, но мягкий z_stick
-"""
+# Реестр reward-функций. Выбор: --reward при train-ppo или rollout.
+#
+# Модули: simple, pbrs, long_horizon, goal_only, no_regression, no_z_stick, weak_z_stick.
 
 from __future__ import annotations
 

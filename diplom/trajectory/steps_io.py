@@ -63,7 +63,7 @@ class EpisodeFileRef:
 
 
 class EnvStepsWriter:
-    """Пишет шаги эпизода в JSONL на диск, не держа их в RAM."""
+    # Пишет шаги эпизода в JSONL на диск, не держа их в RAM.
 
     def __init__(self, output_dir: Path, env_idx: int) -> None:
         self._output_dir = Path(output_dir)
@@ -85,9 +85,35 @@ class EnvStepsWriter:
         self.step_count += 1
 
     def flush(self) -> None:
-        """Сбросить буфер JSONL на диск перед чтением снапшотом live-рендера."""
+        # Сбросить буфер JSONL на диск перед чтением снапшотом live-рендера.
         if self._handle is not None:
             self._handle.flush()
+
+    def rewrite_current(self, steps: list[dict[str, Any]]) -> None:
+        # Полностью перезаписать текущий JSONL эпизода (после сглаживания/replay).
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
+
+        self.current_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.current_path.open("w", encoding="utf-8") as handle:
+            for step in steps:
+                handle.write(json.dumps(step, ensure_ascii=False, separators=(",", ":")))
+                handle.write("\n")
+        self.step_count = len(steps)
+        self.open_current()
+
+    @property
+    def first_step(self) -> dict[str, Any] | None:
+        if self.step_count <= 0:
+            return None
+        return _read_jsonl_first_record(self.current_path)
+
+    @property
+    def last_step(self) -> dict[str, Any] | None:
+        if self.step_count <= 0:
+            return None
+        return _read_jsonl_last_record(self.current_path)
 
     def finalize_episode(self, episode_num: int) -> Path:
         if self._handle is not None:
@@ -163,7 +189,7 @@ def archive_success_episode(
     episode_num: int,
     step_count: int | None = None,
 ) -> Path:
-    """Скопировать полный JSONL эпизода в ``_success/`` и записать метаданные для replay."""
+    # Скопировать полный JSONL эпизода в _success/ и записать метаданные для replay.
     dest_path = success_episode_steps_path(output_dir, env_idx, episode_num)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, dest_path)
@@ -212,7 +238,7 @@ def load_success_episode_meta(meta_path: Path) -> dict[str, Any]:
 
 
 def load_replay_actions(steps_path: Path) -> list[float]:
-    """Действия модели по шагам (для open-loop replay)."""
+    # Действия модели по шагам (для open-loop replay).
     return [float(step["action"]) for step in load_steps_jsonl(steps_path)]
 
 
@@ -235,7 +261,7 @@ def load_viz_steps_jsonl(
     max_points: int | None = MAX_VIZ_PLOT_POINTS,
     step_count: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Загрузить поля для 3D-графика; при длинных эпизодах — равномерное прореживание."""
+    # Загрузить поля для 3D-графика; при длинных эпизодах, равномерное прореживание.
     if not steps_path.is_file():
         return []
 
@@ -268,7 +294,7 @@ def accumulate_position_extents(
     step_count: int | None = None,
     max_samples: int = 4_000,
 ) -> tuple[np.ndarray | None, np.ndarray | None]:
-    """Обновить min/max координат по JSONL без хранения всех точек в RAM."""
+    # Обновить min/max координат по JSONL без хранения всех точек в RAM.
     if not steps_path.is_file():
         return min_xyz, max_xyz
 
@@ -308,7 +334,7 @@ def include_position_in_extents(
 
 
 def load_last_target_from_jsonl(steps_path: Path) -> list[float] | None:
-    """Вернуть target_position последнего шага (читаем хвост файла)."""
+    # Вернуть target_position последнего шага (читаем хвост файла).
     if not steps_path.is_file():
         return None
 
@@ -330,7 +356,7 @@ def load_last_target_from_jsonl(steps_path: Path) -> list[float] | None:
 
 
 def cleanup_steps_dir(output_dir: Path) -> None:
-    """Удалить временные JSONL в ``_steps/``; архив ``_success/`` не трогать."""
+    # Удалить временные JSONL в _steps/; архив _success/ не трогать.
     steps_root = steps_dir(output_dir)
     if not steps_root.is_dir():
         return

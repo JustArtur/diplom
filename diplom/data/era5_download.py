@@ -30,16 +30,15 @@ def download_era5_pressure(
     workers: int | None = None,
     force: bool = False,
 ) -> str:
-    """Скачать ERA5 в NetCDF.
-
-    Без ``workers`` — один запрос CDS сразу в ``outfile``.
-    С ``workers`` — чанки по ``_CHUNK_TIMESTEPS`` временных точек (параллельно при workers > 1),
-    затем склейка. При ``hour_step=8`` это 8 календарных дней на чанк, при ``hour_step=1`` — 1 день.
-
-    Returns:
-        ``"skipped"`` — файл уже есть и ``force`` не задан;
-        ``"downloaded"`` — запрос выполнен или файл перекачан.
-    """
+    # Скачать ERA5 в NetCDF.
+    #
+    # Без workers, один запрос CDS сразу в outfile.
+    # С workers, чанки по _CHUNK_TIMESTEPS временных точек (параллельно при workers > 1),
+    # затем склейка. При hour_step=8 это 8 календарных дней на чанк, при hour_step=1, 1 день.
+    #
+    # Возвращает "skipped", если файл уже есть и force не задан;
+    # "downloaded", если запрос выполнен или файл перекачан.
+    #
     _check_credentials()
     _ensure_parent(config.outfile)
 
@@ -126,7 +125,7 @@ def download_era5_pressure(
 
 
 def _download_single_file(config: DownloadConfig) -> None:
-    """Скачать весь период одним запросом CDS напрямую в outfile."""
+    # Скачать весь период одним запросом CDS напрямую в outfile.
     import cdsapi  # lazy import to avoid dependency when unused
 
     days = _date_range(config.start, config.end)
@@ -135,7 +134,7 @@ def _download_single_file(config: DownloadConfig) -> None:
 
     period = f"{config.start} … {config.end}" if config.start != config.end else config.start
     typer.secho(
-        f"Запрос ERA5 за {period} → {config.outfile.name} …",
+        f"Запрос ERA5 за {period} -> {config.outfile.name} …",
         fg=typer.colors.CYAN,
     )
     _retrieve_to_path(cdsapi.Client(), requests, config.outfile)
@@ -143,7 +142,7 @@ def _download_single_file(config: DownloadConfig) -> None:
 
 
 def merge_era5_netcdf_files(chunk_paths: Sequence[Path], outfile: Path) -> None:
-    """Объединить NetCDF-чанки ERA5 по оси времени в один файл."""
+    # Объединить NetCDF-чанки ERA5 по оси времени в один файл.
     import numpy as np
     import xarray as xr  # lazy import to avoid dependency when unused
 
@@ -266,12 +265,12 @@ def _build_requests_for_days(
     days: Sequence[str],
     hours: list[str],
 ) -> list[dict]:
-    """Собрать CDS-запросы по календарным месяцам.
-
-    CDS трактует year/month/day как декартово произведение, поэтому нельзя
-    передавать сразу все уникальные годы, месяцы и числа из произвольного
-    списка дат — иначе при чанке через границу месяца подтянутся лишние дни.
-    """
+    # Собрать CDS-запросы по календарным месяцам.
+    #
+    # CDS трактует year/month/day как декартово произведение, поэтому нельзя
+    # передавать сразу все уникальные годы, месяцы и числа из произвольного
+    # списка дат, иначе при чанке через границу месяца подтянутся лишние дни.
+    #
     by_year_month: dict[tuple[str, str], list[str]] = {}
     for day in days:
         key = (day[:4], day[5:7])
@@ -328,7 +327,7 @@ def _chunk_day_groups(
     hour_step: int,
     chunk_timesteps: int = _CHUNK_TIMESTEPS,
 ) -> list[list[str]]:
-    """Разбить период на группы календарных дней с ~chunk_timesteps точками времени."""
+    # Разбить период на группы календарных дней с ~chunk_timesteps точками времени.
     days = _date_range(start, end)
     timesteps_per_day = len(_cds_time_hours(hour_step))
     days_per_chunk = max(1, chunk_timesteps // timesteps_per_day)
@@ -340,7 +339,7 @@ def _is_usable_netcdf(path: Path) -> bool:
 
 
 def _remove_existing_download(outfile: Path, chunks_dir: Path) -> None:
-    """Удалить итоговый NetCDF и каталог чанков перед принудительной перекачкой."""
+    # Удалить итоговый NetCDF и каталог чанков перед принудительной перекачкой.
     if outfile.is_file():
         outfile.unlink()
         typer.secho(f"Удалён для --force: {outfile}", fg=typer.colors.YELLOW)
@@ -350,7 +349,7 @@ def _remove_existing_download(outfile: Path, chunks_dir: Path) -> None:
 
 
 def _retrieve_chunk(client: "CdsClient", requests: dict | Sequence[dict], chunk_path: Path) -> None:
-    """Скачать чанк (один или несколько запросов по месяцам) в chunk_path."""
+    # Скачать чанк (один или несколько запросов по месяцам) в chunk_path.
     if isinstance(requests, dict):
         request_list = [requests]
     else:
@@ -364,7 +363,7 @@ def _retrieve_to_path(
     requests: Sequence[dict],
     target_path: Path,
 ) -> None:
-    """Скачать один или несколько CDS-запросов и записать в target_path."""
+    # Скачать один или несколько CDS-запросов и записать в target_path.
     if len(requests) == 1:
         _retrieve_single_netcdf(client, requests[0], target_path)
         return
@@ -385,7 +384,7 @@ def _retrieve_to_path(
 
 
 def _retrieve_single_netcdf(client: "CdsClient", request: dict, target_path: Path) -> None:
-    """Скачать один CDS-запрос во временный файл и атомарно переименовать."""
+    # Скачать один CDS-запрос во временный файл и атомарно переименовать.
     _ensure_parent(target_path)
     tmp_path = target_path.with_name(f".{target_path.name}.part")
     try:
@@ -429,7 +428,7 @@ def _assert_all_chunks_ready(chunk_paths: Sequence[Path]) -> None:
         if unreadable:
             parts.append("не читаются: " + ", ".join(unreadable))
         typer.secho(
-            "Не все чанки готовы к склейке — " + "; ".join(parts),
+            "Не все чанки готовы к склейке, " + "; ".join(parts),
             fg=typer.colors.RED,
             err=True,
         )
@@ -444,7 +443,7 @@ def _verify_netcdf_open(path: Path) -> None:
 
 
 def _path_for_netcdf(path: Path) -> str:
-    """Путь для netCDF4: на Windows с кириллицей в Users — короткий 8.3 путь."""
+    # Путь для netCDF4: на Windows с кириллицей в Users, короткий 8.3 путь.
     resolved = path.resolve()
     if os.name != "nt":
         return str(resolved)

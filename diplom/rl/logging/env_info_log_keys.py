@@ -1,8 +1,8 @@
-"""Скаляры env info для TensorBoard (один shmem-блок, минимум ключей — без просадки FPS)."""
+# Скаляры env info для TensorBoard (один shmem-блок, минимум ключей, без просадки FPS).
 
 from __future__ import annotations
 
-# Только метрики для диагностики навигации; остальное — в JSONL траекторий.
+# Только метрики для диагностики навигации; остальное, в JSONL траекторий.
 ENV_INFO_LOG_KEYS: tuple[str, ...] = (
     "wind_toward",
     "horizontal_distance",

@@ -1,4 +1,4 @@
-"""Константы среды обучения."""
+# Константы среды обучения.
 
 import numpy as np
 
@@ -24,10 +24,10 @@ OBS_NAV_DISTANCE_SCALE = 50_000.0
 # Нормализация счётчика шагов подряд с wind_toward < 0.
 OBS_ADVERSE_WIND_STEPS_SCALE = 1_000.0
 # Радиус успеха по XY (м).
-TARGET_REACH_RADIUS = 100_000.0
+TARGET_REACH_RADIUS = 300_000.0
 # Допустимое |ΔZ| до цели при успехе (decouple XY / Z).
 TARGET_VERTICAL_REACH_RADIUS = 1_000.0
-# Рандомизация старта только по X/Y; Z — всегда base_balloon.initial_position[2].
+# Рандомизация старта только по X/Y; Z, всегда base_balloon.initial_position[2].
 TRAIN_INITIAL_POSITION_DELTA = np.array([8_000.0, 8_000.0, 0.0], dtype=np.float32)
 TRAIN_TARGET_POSITION_HORIZONTAL_DELTA = 100_000.0
 TRAIN_TARGET_POSITION_VERTICAL_DELTA = 1_500.0

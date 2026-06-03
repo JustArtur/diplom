@@ -1,4 +1,4 @@
-"""Фабрика сборки симуляции (тонкая обёртка над Simulation)."""
+# Фабрика сборки симуляции (тонкая обёртка над Simulation).
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def create_simulation(
     *,
     env_idx: int | None = None,
 ) -> Simulation:
-    """Собрать ``Simulation``; координаты из ``BalloonConfig`` подставляются из границ датасета, если они не заданы."""
+    # Собрать Simulation; координаты из BalloonConfig подставляются из границ датасета, если они не заданы.
 
     balloon = resolve_balloon_config(simulation_config.balloon, wind_interp.world_bounds)
     balloon = replace(

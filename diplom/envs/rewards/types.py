@@ -1,41 +1,4 @@
-"""Общие типы reward: контекст шага, состояние эпизода, результат.
-
-RewardStepContext (immutable, один шаг)
----------------------------------------
-Среда собирает одинаковый набор полей для всех reward-моделей:
-
-- ``result`` — SimResult текущего шага.
-- ``previous_position`` — XYZ до ``sim.step()``; нужен для progress и dz.
-- ``clipped_action`` — действие агента после clip; idle-штраф.
-- ``energy_delta`` — прирост ``energy_spent`` за шаг.
-- ``sim_time`` — модельное время ERA5 для probe-ветра в reward.
-- ``z_min`` / ``z_max`` — клип probe-высот по границам датасета.
-- ``max_probe_wind_toward`` — max(probe_winds), если BalloonEnv уже посчитал batch; иначе None.
-- ``boundary_contact`` — контакт с границей/потолком датасета.
-- ``step_count`` / ``max_episode_steps`` — truncated при достижении лимита.
-- ``target_reach_radius`` / ``target_vertical_reach_radius`` — success (terminated).
-
-RewardState (mutable, весь эпизод)
-----------------------------------
-Живёт в BalloonEnv, сбрасывается на ``reset()``. Reward читает и обновляет:
-
-- ``best_horizontal_distance`` — лучшая XY-дистанция до цели (regression, obs nav).
-- ``prev_wind_toward`` / ``last_wind_align_delta`` — delta ветра, obs temporal.
-- ``adverse_wind_steps`` — счётчик шагов с wind_toward < 0 (obs temporal).
-- ``consecutive_*_wind`` — streak-термы и логирование.
-- ``idle_action_streak`` — серия «большой action, малый dz».
-- ``z_window`` — скользящее окно высот для z_stick penalty.
-
-RewardResult
-------------
-Возвращается из ``compute_reward``:
-
-- ``reward`` — сумма термов + SUCCESS_REWARD при success.
-- ``terminated`` / ``truncated`` — флаги конца эпизода.
-- ``horizontal_progress`` / ``vertical_progress`` — для info и JSONL.
-- ``wind_toward`` / ``wind_align_delta`` — для info и step record.
-- ``terms`` — dict с ключами ``reward_*_term`` для TensorBoard.
-"""
+# Контекст шага, состояние эпизода и результат reward.
 
 from __future__ import annotations
 
@@ -50,7 +13,7 @@ from diplom.sim.simulation import SimResult
 
 @dataclass(frozen=True, slots=True)
 class RewardStepContext:
-    """Параметры одного шага среды; одинаковы для всех reward-модулей."""
+    # Параметры одного шага среды; одинаковы для всех reward-модулей.
 
     result: SimResult
     previous_position: np.ndarray

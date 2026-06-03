@@ -21,18 +21,18 @@ def export_tensorboard(
         help="Сводка ключевых метрик в .scalars.summary.txt/.json",
     ),
 ) -> None:
-    """Экспорт scalar-метрик TensorBoard в CSV рядом с каждым event-файлом.
-
-    Создаёт файлы вида ``events.out.tfevents.<id>.scalars.csv`` с колонками:
-    tag, step, value, wall_time и сводку ``*.scalars.summary.txt`` / ``*.scalars.summary.json``.
-
-    \b
-    Примеры:
-
-      diplom export-tensorboard ppo/{датасет}/PPO_25/tb_1
-
-      diplom export-tensorboard ppo/{датасет}/PPO_25/tb_1/events.out.tfevents.1779218441.host.0
-    """
+    # Экспорт scalar-метрик TensorBoard в CSV рядом с каждым event-файлом.
+    #
+    # Создаёт файлы вида events.out.tfevents.<id>.scalars.csv с колонками:
+    # tag, step, value, wall_time и сводку *.scalars.summary.txt / *.scalars.summary.json.
+    #
+    # 
+    # Примеры:
+    #
+    # diplom export-tensorboard ppo/{датасет}/PPO_25/tb_1
+    #
+    # diplom export-tensorboard ppo/{датасет}/PPO_25/tb_1/events.out.tfevents.1779218441.host.0
+    #
     from diplom.dev.tensorboard.export import export_tensorboard_path
 
     try:

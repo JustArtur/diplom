@@ -1,4 +1,4 @@
-"""Параллельный запуск нескольких train-ppo с общим воркером рендера траекторий."""
+# Параллельный запуск нескольких train-ppo с общим воркером рендера траекторий.
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ RUNNER_TOKEN = "runner"
 
 
 def parse_train_parallel_argv(argv: list[str]) -> tuple[list[str], list[list[str]]]:
-    """Разбить argv на глобальные опции и списки аргументов для каждого run."""
+    # Разбить argv на глобальные опции и списки аргументов для каждого run.
     global_args: list[str] = []
     runs: list[list[str]] = []
     current: list[str] | None = None
@@ -44,7 +44,7 @@ def parse_train_parallel_argv(argv: list[str]) -> tuple[list[str], list[list[str
 
     if not runs:
         raise ValueError(
-            f"нужен хотя бы один блок «{RUNNER_TOKEN}» с аргументами train-ppo, "
+            f"нужен хотя бы один блок {RUNNER_TOKEN} с аргументами train-ppo, "
             f"например: diplom train-parallel-ppo {RUNNER_TOKEN} --dataset era5_..."
         )
     return global_args, runs
@@ -69,7 +69,7 @@ def _parse_jobs(global_args: list[str]) -> tuple[int, list[str]]:
 
 
 def run_train_parallel_ppo(argv: list[str]) -> int:
-    """Запустить несколько train-ppo; один subprocess рендера траекторий на все run."""
+    # Запустить несколько train-ppo; один subprocess рендера траекторий на все run.
     from diplom.data.era5_manifest import expand_training_manifest_argv
 
     argv = expand_training_manifest_argv(argv)

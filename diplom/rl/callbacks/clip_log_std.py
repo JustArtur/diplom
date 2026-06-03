@@ -1,4 +1,4 @@
-"""Callback: не даёт PPO раздувать log_std политики выше целевого диапазона σ."""
+# Callback: не даёт PPO раздувать log_std политики выше целевого диапазона σ.
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from diplom.rl.ppo.policy import clamp_policy_log_std
 
 
 class ClipLogStdCallback(BaseCallback):
-    """Клампит learnable log_std после каждого rollout."""
+    # Клампит learnable log_std после каждого rollout.
 
     def __init__(self, *, model_name: str = "default") -> None:
         super().__init__(verbose=0)

@@ -1,4 +1,4 @@
-"""Общие хелперы для policy rollout в subprocess."""
+# Общие хелперы для policy rollout в subprocess.
 
 from __future__ import annotations
 

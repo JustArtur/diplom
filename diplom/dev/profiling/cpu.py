@@ -1,4 +1,4 @@
-"""Профилирование CPU (cProfile) в главном и дочерних процессах обучения."""
+# Профилирование CPU (cProfile) в главном и дочерних процессах обучения.
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def _clear_profile_targets_env() -> None:
 
 
 def stop_process_cprofile_if_running() -> None:
-    """Сохранить cProfile и выключить трекер в текущем процессе."""
+    # Сохранить cProfile и выключить трекер в текущем процессе.
     global _active_profiler, _profiler_started
 
     if _active_profiler is None:
@@ -80,7 +80,7 @@ def stop_process_cprofile_if_running() -> None:
 
 
 def start_process_cprofile_if_enabled(process_name: str) -> None:
-    """Запустить cProfile в текущем процессе (один раз на PID)."""
+    # Запустить cProfile в текущем процессе (один раз на PID).
     global _active_profiler, _profiler_started
 
     if _profiler_started:
@@ -109,7 +109,7 @@ def start_process_cprofile_if_enabled(process_name: str) -> None:
     _profiler_started = True
 
     atexit.register(stop_process_cprofile_if_running)
-    print(f"[cprofile] {process_name} (pid={os.getpid()}) → {prof_path}")  # noqa: T201
+    print(f"[cprofile] {process_name} (pid={os.getpid()}) -> {prof_path}")  # noqa: T201
 
 
 @contextmanager
@@ -118,7 +118,7 @@ def multiprocess_cprofile_session(
     *,
     targets: MemrayProfileTargets,
 ) -> Iterator[Path]:
-    """Включить cProfile в дочерних процессах через переменные окружения."""
+    # Включить cProfile в дочерних процессах через переменные окружения.
     cprofile_dir = run_dir / CPROFILE_SUBDIR
     cprofile_dir.mkdir(parents=True, exist_ok=True)
 

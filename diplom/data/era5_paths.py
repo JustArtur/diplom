@@ -58,7 +58,7 @@ DEFAULT_ERA5_OUTFILE = era5_outfile_for_bounds(
 
 
 def list_era5_datasets(directory: Path = ERA5_TRAINING_DATA_DIR) -> list[Path]:
-    """Все NetCDF-датасеты ERA5 в каталоге (отсортированы по имени файла)."""
+    # Все NetCDF-датасеты ERA5 в каталоге (отсортированы по имени файла).
     if not directory.is_dir():
         return []
     return sorted(directory.glob("*.nc"))
@@ -69,7 +69,7 @@ def resolve_era5_dataset_path(
     *,
     data_dir: Path = ERA5_TRAINING_DATA_DIR,
 ) -> Path:
-    """Разрешить имя или путь датасета в существующий NetCDF-файл."""
+    # Разрешить имя или путь датасета в существующий NetCDF-файл.
     path = Path(name)
 
     if path.is_file():
@@ -87,11 +87,11 @@ def resolve_era5_dataset_path(
 
     available = list_era5_datasets(data_dir)
     hint = ", ".join(p.name for p in available) if available else "(каталог пуст)"
-    raise ValueError(f"Датасет «{name}» не найден. Доступные в {data_dir}: {hint}")
+    raise ValueError(f"Датасет {name} не найден. Доступные в {data_dir}: {hint}")
 
 
 def era5_dataset_title(path: Path) -> str:
-    """Человекочитаемое имя датасета (без расширения .nc) для заголовка графика."""
+    # Человекочитаемое имя датасета (без расширения .nc) для заголовка графика.
     return path.stem
 
 
@@ -99,7 +99,7 @@ def training_run_prefix(
     dataset_path: Path,
     experiment_name: str | None = None,
 ) -> str:
-    """Имя run-а: experiment или stem NetCDF без .nc."""
+    # Имя run-а: experiment или stem NetCDF без .nc.
     if experiment_name and experiment_name.strip():
         return experiment_name.strip()
     return dataset_path.stem
@@ -111,7 +111,7 @@ def resolve_dataset_reference(
     data_dir: Path = ERA5_TRAINING_DATA_DIR,
     manifest_path: Path = ERA5_TRAINING_MANIFEST_PATH,
 ) -> Path:
-    """Разрешить имя, путь или числовой id (#1 из datasets_manifest.toml) в NetCDF."""
+    # Разрешить имя, путь или числовой id (#1 из datasets_manifest.toml) в NetCDF.
     if isinstance(reference, int) or str(reference).isdigit():
         dataset_id = int(reference)
         if not manifest_path.is_file():
@@ -130,20 +130,20 @@ def resolve_dataset_reference(
 
 
 def wind_plot_html_path(dataset_path: Path, output_dir: Path) -> Path:
-    """Путь к HTML-графику ветра для датасета: {output_dir}/{stem}.html."""
+    # Путь к HTML-графику ветра для датасета: {output_dir}/{stem}.html.
     return output_dir / f"{dataset_path.stem}.html"
 
 
 def wind_cache_value_path(source_path: Path) -> Path:
-    """Путь к memmap-кэшу интерполятора ветра для NetCDF-датасета."""
+    # Путь к memmap-кэшу интерполятора ветра для NetCDF-датасета.
     return ERA5_WIND_CACHE_DIR / f"{source_path.name}.wind-cache.npy"
 
 
 def wind_cache_meta_path(source_path: Path) -> Path:
-    """Путь к JSON-метаданным кэша интерполятора ветра."""
+    # Путь к JSON-метаданным кэша интерполятора ветра.
     return ERA5_WIND_CACHE_DIR / f"{source_path.name}.wind-cache.json"
 
 
 def download_chunks_dir(outfile: Path) -> Path:
-    """Каталог для промежуточных NetCDF-чанков при скачивании ERA5."""
+    # Каталог для промежуточных NetCDF-чанков при скачивании ERA5.
     return ERA5_DOWNLOAD_CHUNKS_DIR / f"{outfile.stem}.chunks"

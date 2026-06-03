@@ -1,4 +1,4 @@
-"""Дефолты CLI, не дублирующие доменную логику config."""
+# Дефолты CLI, не дублирующие доменную логику config.
 
 from __future__ import annotations
 

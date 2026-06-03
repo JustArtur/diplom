@@ -1,4 +1,4 @@
-"""Профилирование памяти (memray) в главном и дочерних процессах обучения."""
+# Профилирование памяти (memray) в главном и дочерних процессах обучения.
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ _tracker_started: bool = False
 
 @dataclass(frozen=True, slots=True)
 class MemrayProfileTargets:
-    """Какие процессы профилировать memray (по умолчанию всё выключено)."""
+    # Какие процессы профилировать memray (по умолчанию всё выключено).
 
     main: bool = False
     envs: bool = False
@@ -98,7 +98,7 @@ def _load_tracker_class() -> type[Tracker]:
 
 
 def stop_process_memray_if_running() -> None:
-    """Закрыть memray-трекер и записать .bin в текущем процессе."""
+    # Закрыть memray-трекер и записать .bin в текущем процессе.
     global _active_tracker, _tracker_started
 
     if _active_tracker is None:
@@ -115,10 +115,10 @@ def stop_process_memray_if_running() -> None:
 
 
 def start_process_memray_if_enabled(process_name: str) -> None:
-    """Запустить memray в текущем процессе (один раз на PID).
-
-    В главном процессе профили среды (env_*) не включаются — там только DummyVecEnv.
-    """
+    # Запустить memray в текущем процессе (один раз на PID).
+    #
+    # В главном процессе профили среды (env_*) не включаются, там только DummyVecEnv.
+    #
     global _active_tracker, _tracker_started
 
     if _tracker_started:
@@ -146,7 +146,7 @@ def start_process_memray_if_enabled(process_name: str) -> None:
     _tracker_started = True
 
     atexit.register(stop_process_memray_if_running)
-    print(f"[memray] {process_name} (pid={os.getpid()}) → {bin_path}")  # noqa: T201
+    print(f"[memray] {process_name} (pid={os.getpid()}) -> {bin_path}")  # noqa: T201
 
 
 @contextmanager
@@ -156,7 +156,7 @@ def multiprocess_memray_session(
     targets: MemrayProfileTargets,
     native_traces: bool = False,
 ) -> Iterator[Path]:
-    """Включить memray в дочерних процессах через переменные окружения."""
+    # Включить memray в дочерних процессах через переменные окружения.
     memray_dir = run_dir / MEMRAY_SUBDIR
     memray_dir.mkdir(parents=True, exist_ok=True)
 

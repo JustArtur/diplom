@@ -97,7 +97,7 @@ def train_ppo(
         0,
         "--demo-pretrain-epochs",
         min=0,
-        help="Сколько эпох BC/pretraining сделать перед PPO (0 — пропустить)",
+        help="Сколько эпох BC/pretraining сделать перед PPO (0, пропустить)",
     ),
     demo_pretrain_batch_size: int = typer.Option(
         256,
@@ -118,7 +118,7 @@ def train_ppo(
         help="Ограничение нормы градиента во время BC/pretraining",
     ),
 ) -> None:
-    """Запустить обучение PPO-модели."""
+    # Запустить обучение PPO-модели.
     from diplom.dev.profiling.runner import PROFILE_N_ENVS
     from diplom.rl.ppo.runner import train_ppo as run_train_ppo
 
@@ -186,19 +186,19 @@ def train_ppo(
 
 
 def train_parallel_ppo(ctx: typer.Context) -> None:
-    """Несколько train-ppo параллельно с одним процессом рендера траекторий.
-
-    Из манифеста (``data/training/datasets_manifest.toml``):
-
-    \b
-      diplom train-parallel-ppo --from-manifest
-      diplom train-parallel-ppo --from-manifest --jobs 2
-
-    Вручную — глобально ``--jobs N``, затем блоки ``runner``:
-
-    \b
-      diplom train-parallel-ppo --jobs 2 runner --dataset era5_... --envs=2
-    """
+    # Несколько train-ppo параллельно с одним процессом рендера траекторий.
+    #
+    # Из манифеста (data/training/datasets_manifest.toml):
+    #
+    # 
+    # diplom train-parallel-ppo --from-manifest
+    # diplom train-parallel-ppo --from-manifest --jobs 2
+    #
+    # Вручную, глобально --jobs N, затем блоки runner:
+    #
+    # 
+    # diplom train-parallel-ppo --jobs 2 runner --dataset era5_... --envs=2
+    #
     from diplom.dev.parallel_ppo import run_train_parallel_ppo
 
     try:

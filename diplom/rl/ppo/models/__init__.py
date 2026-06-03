@@ -1,24 +1,6 @@
-"""Реестр PPO-моделей: ``diplom.rl.ppo.models.<name>`` → ``SPEC``.
-
-Каждый модуль экспортирует ``SPEC: ModelSpec`` — конфигурация политики SB3 /
-sb3-contrib для ``train_ppo``. Выбор: ``diplom train-ppo --model <name>``.
-
-ModelSpec задаёт
-----------------
-- ``policy_type`` — класс политики (MlpPolicy / MlpLstmPolicy).
-- ``net_arch`` — скрытые слои pi и vf сетей.
-- ``log_std_init/min/max`` — диапазон std гауссового action (clip callback).
-- ``recurrent`` + LSTM-параметры — для MlpLstmPolicy.
-
-Размер входа политики = ``OBS_DIM`` выбранной obs-модели (``--obs``);
-при смене obs нужно новое обучение или совместимая пара obs+checkpoint.
-
-Доступные модели
-----------------
-default  — MlpPolicy, pi/vf [128, 128], без памяти
-explore  — MlpPolicy, pi/vf [256, 256, 128], больше exploration
-lstm     — MlpLstmPolicy, pi/vf [128], LSTM 256, RecurrentPPO
-"""
+# Реестр PPO-моделей (default, explore, lstm). Выбор: diplom train-ppo --model <name>.
+#
+# Размер входа сети должен совпадать с OBS_DIM выбранной obs-модели.
 
 from __future__ import annotations
 

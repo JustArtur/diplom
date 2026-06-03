@@ -1,19 +1,4 @@
-"""Reward ``no_z_stick`` — полный reward без штрафа z_stick.
-
-CLI: ``--reward no_z_stick``
-
-Отличия от полного reward
-----------------------
-- ``z_stick_term = 0.0`` — окно Z не влияет на reward.
-- ``Z_STICK_WINDOW_STEPS = 1`` — deque в RewardState минимальный.
-
-Все остальные термы — как в полном reward (включая distance_regression 0.5).
-
-Когда использовать
-------------------
-Офлайн-симуляция обученной политики: ``diplom rollout -m ... --reward no_z_stick``
-— та же политика, но без штрафа «застрял на высоте»; смотреть траекторию и total_reward.
-"""
+# Reward no_z_stick: без z_stick.
 
 from __future__ import annotations
 

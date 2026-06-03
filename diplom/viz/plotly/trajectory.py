@@ -1,13 +1,12 @@
-"""Интерактивная 3D-визуализация траектории полёта аэростата (Plotly HTML).
-
-Публичный API:
-  compute_trajectory_bounds(episodes, extra_steps, margin) → TrajectoryBounds
-  build_figure(episodes, title, bounds, wind_traces=...)  → go.Figure
-  build_episode_traces(episode)                            → List[go.BaseTraceType]
-  apply_figure_layout(fig, title, bounds)
-  save_figure(fig, path)                                   → standalone HTML
-  save_live_figure(fig, path, generation)                  → live HTML + data slots
-"""
+# Интерактивная 3D-визуализация траектории полёта аэростата (Plotly HTML).
+#
+# Публичный API:
+# compute_trajectory_bounds(episodes, extra_steps, margin) -> TrajectoryBounds
+# build_figure(episodes, title, bounds, wind_traces=...)  -> go.Figure
+# build_episode_traces(episode)                            -> List[go.BaseTraceType]
+# apply_figure_layout(fig, title, bounds)
+# save_figure(fig, path)                                   -> standalone HTML
+# save_live_figure(fig, path, generation)                  -> live HTML + data slots
 
 from __future__ import annotations
 
@@ -37,11 +36,10 @@ def _env_color(env_idx: int) -> str:
     return _TRAJ_PALETTE[env_idx % len(_TRAJ_PALETTE)]
 
 
-# ──────────────────── Типы данных ────────────────────
-
+# Типы данных
 @dataclass
 class EpisodeVizData:
-    """Данные одного эпизода для построения графика."""
+    # Данные одного эпизода для построения графика.
 
     env_idx: int
     steps: List[dict]       # каждый шаг: position, wind, action, reward, sim_time, ...
@@ -49,11 +47,10 @@ class EpisodeVizData:
     label: str = ""         # отображаемое имя в легенде
 
 
-# ──────────────────── TrajectoryBounds ────────────────────
-
+# TrajectoryBounds
 @dataclass
 class TrajectoryBounds:
-    """Ограничивающий параллелепипед траекторий — используется для масштаба осей."""
+    # Ограничивающий параллелепипед траекторий, используется для масштаба осей.
 
     xmin: float
     xmax: float
@@ -95,16 +92,13 @@ def compute_trajectory_bounds(
     min_z_span: float = 200.0,
     world_bounds: Optional[WorldBounds] = None,
 ) -> TrajectoryBounds:
-    """Вычислить границы bbox по всем позициям траекторий + целевым точкам.
-
-    Args:
-        episodes: список эпизодов с шагами.
-        extra_steps: дополнительные шаги (текущий незавершённый эпизод).
-        margin: относительный отступ от краёв bbox (0.25 = 25% от span).
-        min_xy_span: минимальный размах по XY (м), чтобы не схлопываться в точку.
-        min_z_span: минимальный размах по Z (м).
-        world_bounds: реальные границы мира, если график нужно синхронизировать по датасету.
-    """
+    # Границы bbox по позициям траекторий и целевым точкам.
+    #
+    # episodes, эпизоды с шагами; extra_steps, шаги текущего незавершённого эпизода.
+    # margin, относительный отступ от краёв (0.25 = 25% span).
+    # min_xy_span и min_z_span, минимальный размах осей (м).
+    # world_bounds, границы мира из датасета для синхронизации сцены.
+    #
     if world_bounds is not None:
         return _bounds_from_world(world_bounds)
 
@@ -147,7 +141,7 @@ def compute_trajectory_bounds_from_positions(
     min_z_span: float = 200.0,
     world_bounds: Optional[WorldBounds] = None,
 ) -> TrajectoryBounds:
-    """Вычислить bbox только по списку координат (без загрузки полных шагов)."""
+    # Вычислить bbox только по списку координат (без загрузки полных шагов).
     if world_bounds is not None:
         return _bounds_from_world(world_bounds)
     return _bounds_from_positions(
@@ -168,7 +162,7 @@ def compute_trajectory_bounds_from_extents(
     min_z_span: float = 200.0,
     world_bounds: Optional[WorldBounds] = None,
 ) -> TrajectoryBounds:
-    """BBox по уже посчитанным min/max координат (без списка всех точек)."""
+    # BBox по уже посчитанным min/max координат (без списка всех точек).
     if world_bounds is not None:
         return _bounds_from_world(world_bounds)
     if min_xyz is None or max_xyz is None:
@@ -278,16 +272,11 @@ def build_figure(
     world_bounds: Optional[WorldBounds] = None,
     wind_traces: Optional[List[go.BaseTraceType]] = None,
 ) -> go.Figure:
-    """Построить интерактивный 3D-график траекторий.
-
-    Args:
-        episodes: список эпизодов.
-        title: заголовок.
-        bounds: bbox для масштаба осей; вычисляется автоматически если None.
-        extra_steps: шаги текущего незавершённого эпизода (для bounds).
-        world_bounds: реальные границы мира, если график нужно синхронизировать по датасету.
-        wind_traces: Plotly-traces поля ветра (добавляются под траекториями).
-    """
+    # Интерактивный 3D-график траекторий.
+    #
+    # bounds вычисляется автоматически, если None. extra_steps учитываются в bbox.
+    # world_bounds синхронизирует сцену с датасетом. wind_traces рисуются под траекториями.
+    #
     if bounds is None:
         bounds = compute_trajectory_bounds(episodes, extra_steps, world_bounds=world_bounds)
 
@@ -306,7 +295,7 @@ def build_figure(
 
 
 def save_figure(fig: go.Figure, path: Path) -> None:
-    """Сохранить фигуру как standalone HTML (CDN Plotly, не встроен в файл)."""
+    # Сохранить фигуру как standalone HTML (CDN Plotly, не встроен в файл).
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.write_html(str(path), include_plotlyjs="cdn")
 
@@ -342,7 +331,7 @@ def _wind_layer_js_url(html_path: Path) -> str:
 
 
 def write_wind_layer(html_path: Path, wind_traces: List[go.BaseTraceType], wind_key: int) -> bool:
-    """Записать статичный слой конусов ветра (один раз на wind_key)."""
+    # Записать статичный слой конусов ветра (один раз на wind_key).
     key_path = _wind_layer_key_path(html_path)
     layer_path = _wind_layer_path(html_path)
     key_str = str(wind_key)
@@ -405,7 +394,7 @@ def _write_live_trajectory_data(
     layout: dict,
     wind_key: int | None = None,
 ) -> None:
-    """Ping-pong слот только с траекториями (ветер — отдельный _wind.js)."""
+    # Ping-pong слот только с траекториями (ветер, отдельный _wind.js).
     slot = generation % 2
     path = _live_data_path(html_path, slot)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -436,7 +425,7 @@ def save_live_figure(
     generation: int,
     poll_interval_ms: int = DEFAULT_LIVE_POLL_INTERVAL_MS,
 ) -> None:
-    """Сохранить live-viewer: HTML-оболочка + ping-pong data.js (file://-safe)."""
+    # Сохранить live-viewer: HTML-оболочка + ping-pong data.js (file://-safe).
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_live_data(fig, path, generation)
@@ -455,7 +444,7 @@ def save_live_trajectory_update(
     wind_key: int | None = None,
     poll_interval_ms: int = DEFAULT_LIVE_POLL_INTERVAL_MS,
 ) -> None:
-    """Обновить только траектории; конусы ветра пишутся отдельно и переиспользуются."""
+    # Обновить только траектории; конусы ветра пишутся отдельно и переиспользуются.
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     has_wind = wind_traces is not None and wind_key is not None
@@ -502,7 +491,7 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <title>Траектория — live</title>
+  <title>Траектория, live</title>
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <style>
     html, body { margin: 0; height: 100%; background: rgb(15, 15, 25); overflow: hidden; }
@@ -565,7 +554,8 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
     function loadScript(src) {
       return new Promise(function(resolve) {
         const script = document.createElement("script");
-        script.src = src;
+        const cacheBust = "_=" + Date.now();
+        script.src = src + (src.indexOf("?") >= 0 ? "&" : "?") + cacheBust;
         script.onload = function() { script.remove(); resolve(true); };
         script.onerror = function() { script.remove(); resolve(false); };
         document.head.appendChild(script);
@@ -675,8 +665,7 @@ _LIVE_VIEWER_HTML = """<!DOCTYPE html>
 """
 
 
-# ──────────────────── Построение траектории ────────────────────
-
+# Построение траектории
 def _wind_horizontal_speed(wind: object) -> float:
     if not isinstance(wind, (list, tuple, np.ndarray)) or len(wind) < 2:
         return 0.0
@@ -742,7 +731,7 @@ def build_episode_traces(
             name=f"{name} · старт",
             marker=dict(color="lime", size=8, symbol="diamond",
                         line=dict(color="black", width=1)),
-            text=[_format_step_hover(episode.steps[0], 0, title=f"{name} — старт")],
+            text=[_format_step_hover(episode.steps[0], 0, title=f"{name}, старт")],
             hovertemplate="%{text}<extra></extra>",
             legendgroup=group,
             showlegend=False,
@@ -755,7 +744,7 @@ def build_episode_traces(
             name=f"{name} · цель",
             marker=dict(color="red", size=12, symbol="x"),
             hovertemplate=(
-                f"{name} — цель<br>"
+                f"{name}, цель<br>"
                 f"x={episode.target_position[0]:.0f} м, "
                 f"y={episode.target_position[1]:.0f} м, "
                 f"z={episode.target_position[2]:.0f} м"
@@ -778,7 +767,7 @@ def build_episode_traces(
                     episode.steps[-1],
                     n - 1,
                     title=(
-                        f"{name} — "
+                        f"{name}, "
                         f"{'успех ✓' if episode.steps[-1].get('terminated') else 'truncated'}"
                     ),
                 )
@@ -791,18 +780,17 @@ def build_episode_traces(
     return traces
 
 
-# ──────────────────── Layout ────────────────────
-
+# Layout
 def apply_figure_layout(
     fig: go.Figure,
     title: str,
     bounds: Optional[TrajectoryBounds] = None,
 ) -> None:
-    """Применить layout с осями и камерой.
-
-    Если bounds передан — используем его для всех осей. Для X/Y это означает
-    реальные границы мира, для Z — границы данных траекторий.
-    """
+    # Применить layout с осями и камерой.
+    #
+    # Если bounds передан, используем его для всех осей. Для X/Y это означает
+    # реальные границы мира, для Z, границы данных траекторий.
+    #
 
     if bounds is not None:
         x_range = [bounds.xmin, bounds.xmax]
@@ -865,6 +853,4 @@ def apply_figure_layout(
     )
 
 
-# ──────────────────── Утилиты ────────────────────
-
-
+# Утилиты

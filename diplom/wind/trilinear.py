@@ -1,4 +1,4 @@
-"""Быстрая линейная интерполяция на регулярной 4D-сетке (time, pressure, lat, lon)."""
+# Быстрая линейная интерполяция на регулярной 4D-сетке (time, pressure, lat, lon).
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ except ImportError:
 
 
 def _axis_index_weight(axis: np.ndarray, value: float) -> tuple[int, int, float]:
-    """Индексы по оси и вес для линейной интерполяции внутри домена."""
+    # Индексы по оси и вес для линейной интерполяции внутри домена.
     n = axis.shape[0]
     if n < 2:
         return 0, 0, 0.0
@@ -42,7 +42,7 @@ def sample_trilinear(
     lat: float,
     lon: float,
 ) -> np.ndarray:
-    """Сэмпл 4 каналов (u, v, w_omega, t) в точке регулярной сетки. Shape: (4,)."""
+    # Сэмпл 4 каналов (u, v, w_omega, t) в точке регулярной сетки. Shape: (4,).
     if _HAS_NUMBA and values.dtype == np.float32:
         out = np.empty(4, dtype=np.float64)
         _sample_trilinear_numba(
@@ -74,7 +74,7 @@ def sample_trilinear_batch(
     lat_arr: np.ndarray,
     lon_arr: np.ndarray,
 ) -> np.ndarray:
-    """Сэмпл 4 каналов для батча точек. Shape: (n, 4)."""
+    # Сэмпл 4 каналов для батча точек. Shape: (n, 4).
     t_arr = np.asarray(t_arr, dtype=np.float64).reshape(-1)
     p_arr = np.asarray(p_arr, dtype=np.float64).reshape(-1)
     lat_arr = np.asarray(lat_arr, dtype=np.float64).reshape(-1)
@@ -218,7 +218,7 @@ if _HAS_NUMBA:
 
 @dataclass(frozen=True, slots=True)
 class RegularGrid4DSampler:
-    """Сэмплер по сетке (T, P, Lat, Lon, C)."""
+    # Сэмплер по сетке (T, P, Lat, Lon, C).
 
     values: np.ndarray
     time_axis: np.ndarray
@@ -228,7 +228,7 @@ class RegularGrid4DSampler:
 
     @classmethod
     def from_channel_first(cls, data: np.ndarray, time_axis: np.ndarray, pressure_axis: np.ndarray, lat_axis: np.ndarray, lon_axis: np.ndarray) -> RegularGrid4DSampler:
-        """data: (4, T, P, Lat, Lon) → values (T, P, Lat, Lon, 4)."""
+        # data: (4, T, P, Lat, Lon) -> values (T, P, Lat, Lon, 4).
         values = np.moveaxis(np.asarray(data, dtype=np.float32), 0, -1)
         return cls(
             values=values,

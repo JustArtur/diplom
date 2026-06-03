@@ -1,10 +1,4 @@
-"""Reward ``pbrs`` — PBRS по 3D-дистанции + probe-слои и мягкая энергия.
-
-CLI: ``--reward pbrs``
-
-Probe-ветер берётся из BalloonEnv (``ctx.max_probe_wind_toward``), без повторных
-запросов к WindInterpolator — см. ``NEEDS_PROBE_WINDS`` и ``envs/wind_probes.py``.
-"""
+# Reward pbrs: PBRS по 3D-дистанции и probe-ветру.
 
 from __future__ import annotations
 

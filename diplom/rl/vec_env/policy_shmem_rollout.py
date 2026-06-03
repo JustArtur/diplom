@@ -1,4 +1,4 @@
-"""Гибрид п.3+п.4: policy+env в воркере, rollout-буфер через shared memory (без pickle чанка)."""
+# Policy и env в воркере; rollout-буфер в shared memory без pickle чанка.
 
 from __future__ import annotations
 
@@ -302,7 +302,7 @@ def _policy_shmem_rollout_worker(
                 elif cmd == "is_wrapped":
                     remote.send(is_wrapped(env, data))
                 else:
-                    raise NotImplementedError(f"`{cmd}` is not implemented in policy shmem rollout worker")
+                    raise NotImplementedError(f"{cmd} is not implemented in policy shmem rollout worker")
             except EOFError:
                 break
             except KeyboardInterrupt:
@@ -313,7 +313,7 @@ def _policy_shmem_rollout_worker(
 
 
 class PolicyShmemSubprocVecEnv(VecEnv):
-    """Policy rollout в воркерах; массивы rollout в shared memory, pipe — только сигнал."""
+    # Policy rollout в воркерах; массивы rollout в shared memory, pipe, только сигнал.
 
     def __init__(
         self,
@@ -442,7 +442,7 @@ class PolicyShmemSubprocVecEnv(VecEnv):
         step_idx: int,
         n_steps: int,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[dict[str, Any]], np.ndarray]:
-        """Срез rollout по шагу из shared memory (без pickle)."""
+        # Срез rollout по шагу из shared memory (без pickle).
         infos: list[dict[str, Any]] = []
         for env_idx in range(self.num_envs):
             info = self._info_dict(env_idx, step_idx)
@@ -536,7 +536,7 @@ class PolicyShmemSubprocVecEnv(VecEnv):
     def get_images(self) -> Sequence[np.ndarray | None]:
         if self.render_mode != "rgb_array":
             warnings.warn(
-                f"The render mode is {self.render_mode}, but this method assumes it is `rgb_array` to obtain images."
+                f"The render mode is {self.render_mode}, but this method assumes it is rgb_array to obtain images."
             )
             return [None for _ in self.remotes]
         for pipe in self.remotes:

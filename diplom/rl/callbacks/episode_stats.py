@@ -1,4 +1,4 @@
-"""Логирование эпизодных метрик в TensorBoard (Monitor + shmem rollout)."""
+# Логирование эпизодных метрик в TensorBoard (Monitor + shmem rollout).
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 
 class EpisodeStatsCallback(BaseCallback):
-    """Пишет rollout/ep_rew_mean и custom/success_rate при завершении эпизодов."""
+    # Пишет rollout/ep_rew_mean и custom/success_rate при завершении эпизодов.
 
     def __init__(self) -> None:
         super().__init__(verbose=0)

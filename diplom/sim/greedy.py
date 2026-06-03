@@ -28,9 +28,9 @@ class GreedyActionChoice:
 
 @dataclass(frozen=True, slots=True)
 class GreedyRunConfig:
-    """Единственный источник дефолтов greedy baseline (CLI и choose_greedy_action)."""
+    # Единственный источник дефолтов greedy baseline (CLI и choose_greedy_action).
 
-    lookahead_steps: int = 60
+    lookahead_steps: int = 600
     candidate_count: int = 10
     vertical_weight: float = 20.0
     trajectory_render_interval: int = 256

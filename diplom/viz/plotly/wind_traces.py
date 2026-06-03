@@ -1,4 +1,4 @@
-"""Plotly-traces поля ветра (конусы) для переиспользования в wind-viz и trajectory overlay."""
+# Plotly-traces поля ветра (конусы) для переиспользования в wind-viz и trajectory overlay.
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ _CALM_RGB = "rgb(138,143,156)"
 
 
 def horizontal_azimuth_deg_east_north(u: np.ndarray, v: np.ndarray) -> np.ndarray:
-    """Горизонтальный азимут ветра: 0° = E, 90° = N, диапазон [0, 360)."""
+    # Горизонтальный азимут ветра: 0° = E, 90° = N, диапазон [0, 360).
     return np.mod(
         np.degrees(np.arctan2(np.asarray(v, dtype=np.float64), np.asarray(u, dtype=np.float64))),
         360.0,
@@ -38,7 +38,7 @@ def horizontal_azimuth_deg_east_north(u: np.ndarray, v: np.ndarray) -> np.ndarra
 
 
 def pressure_to_altitude_m(pressure_hpa: np.ndarray) -> np.ndarray:
-    """Обратная барометрическая формула ISA: давление (гПа) → высота (м)."""
+    # Обратная барометрическая формула ISA: давление (гПа) -> высота (м).
     p0 = 1013.25
     t0 = 288.15
     lapse = 0.0065
@@ -72,7 +72,7 @@ def build_wind_cone_traces(
     cone_opacity: float = 1.0,
     cone_scale: float = 1.0,
 ) -> list[go.BaseTraceType]:
-    """Построить Plotly Cone-traces поля ветра на 3D-сетке ERA5."""
+    # Построить Plotly Cone-traces поля ветра на 3D-сетке ERA5.
     plot_time = np.datetime64(time, "ns")
     lat_axis = np.asarray(interpolator.latitude_axis_deg, dtype=np.float64)
     lon_axis = np.asarray(interpolator.longitude_axis_deg, dtype=np.float64)
@@ -161,8 +161,8 @@ def build_wind_cone_traces(
                 f"Опорная точка: lon={origin_lon:.2f}°, lat={origin_lat:.2f}°<br>"
                 f"Давление: {p_flat[ii]:.2f} гПа<br>"
                 f"Высота: {alt_flat[ii]/1000:.1f} км ({alt_flat[ii]:.0f} м)<br>"
-                f"<b>u = {u_arr[ii]:.2f} м/с</b> (W→E)<br>"
-                f"<b>v = {v_arr[ii]:.2f} м/с</b> (S→N)<br>"
+                f"<b>u = {u_arr[ii]:.2f} м/с</b> (W->E)<br>"
+                f"<b>v = {v_arr[ii]:.2f} м/с</b> (S->N)<br>"
                 f"<b>w = {w_real[ii]:.4f} м/с</b> (↑+)<br>"
                 f"<b>|V_h| = {spd:.2f} м/с</b><br>"
                 f"<b>Гориз. азимут ≈ {compass_deg:.0f}°</b> (0°=E, 90°=N)<br>"

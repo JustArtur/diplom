@@ -1,4 +1,4 @@
-"""PPO: policy + env.step в subprocess, rollout через shared memory."""
+# PPO: policy + env.step в subprocess, rollout через shared memory.
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from diplom.rl.vec_env.policy_shmem_rollout import PolicyShmemSubprocVecEnv
 
 
 class WorkerRolloutPPO(PPO):
-    """PPO для PolicyShmemSubprocVecEnv (гибрид worker policy + rollout shmem)."""
+    # PPO для PolicyShmemSubprocVecEnv (гибрид worker policy + rollout shmem).
 
     def collect_rollouts(
         self,

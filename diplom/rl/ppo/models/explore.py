@@ -1,20 +1,4 @@
-"""PPO-модель ``explore`` — более широкая и более стохастическая политика.
-
-CLI: ``--model explore``
-
-Архитектура
------------
-- Policy: ``MlpPolicy`` (Stable-Baselines3 PPO).
-- Actor (pi): Linear → [256] → ReLU → [256] → ReLU → [128] → ReLU → action mean.
-- Critic (vf): Linear → [256] → ReLU → [256] → ReLU → [128] → ReLU → value.
-- Action: 1D continuous (кг/с накачки), Gaussian с более широким начальным
-  и допустимым диапазоном ``log_std``.
-
-Зачем
------
-Модель рассчитана на более активный exploration: она чаще пробует разные
-режимы управления, что полезно в задачах со множеством локальных минимумов.
-"""
+# PPO explore: шире сеть, больше exploration.
 
 from __future__ import annotations
 

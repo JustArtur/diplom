@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
+import time
 import webbrowser
 
 import numpy as np
@@ -31,18 +32,91 @@ from diplom.envs.constants import (
 )
 from diplom.envs.observations import get_obs_spec
 from diplom.envs.rewards import get_reward_fn
+from diplom.trajectory.replay import replay_episode_actions, rewrite_env_current_trajectory
+from diplom.trajectory.smoothing import SmoothMethod, count_action_transitions, smooth_actions
 from diplom.viz.plotly.episode_figure import (
     TRAJECTORY_LIVE_WIND_OVERLAY,
-    build_placeholder_live_figure,
     collect_trajectory_traces,
 )
 from diplom.viz.plotly.trajectory import (
     EpisodeVizData,
     compute_trajectory_bounds,
-    save_live_figure,
     save_live_trajectory_update,
 )
 from diplom.viz.plotly.episode_figure import build_wind_overlay_traces, wind_overlay_cache_key
+
+
+@dataclass(frozen=True, slots=True)
+class _ManualCommand:
+    kind: Literal["step", "smooth", "quit"]
+    action: float = 0.0
+    repeat_count: int = 1
+    smooth_method: SmoothMethod | None = None
+    smooth_blend_fraction: float | None = None
+    smooth_range_start: int | None = None
+    smooth_range_end: int | None = None
+    smooth_alpha: float | None = None
+    smooth_window: int | None = None
+
+
+def _is_step_number(token: str) -> bool:
+    try:
+        value = int(token)
+    except ValueError:
+        return False
+    return value >= 1
+
+
+def _parse_smooth_command(parts: list[str]) -> _ManualCommand | str | None:
+    if not parts:
+        return _ManualCommand(kind="smooth")
+
+    method: SmoothMethod | None = None
+    blend_fraction: float | None = None
+    range_start: int | None = None
+    range_end: int | None = None
+    alpha: float | None = None
+    window: int | None = None
+
+    idx = 0
+    if idx < len(parts):
+        token = parts[idx].lower()
+        if token in {"transition", "ema", "moving_average", "ma"}:
+            method = "moving_average" if token == "ma" else token  # type: ignore[assignment]
+            idx += 1
+
+    if idx + 1 < len(parts) and _is_step_number(parts[idx]) and _is_step_number(parts[idx + 1]):
+        range_start = int(parts[idx])
+        range_end = int(parts[idx + 1])
+        idx += 2
+    elif idx < len(parts):
+        try:
+            numeric = float(parts[idx].replace(",", "."))
+        except ValueError:
+            return f"Не удалось разобрать параметр сглаживания: {parts[idx]!r}"
+        if method == "ema":
+            alpha = numeric
+        elif method == "moving_average":
+            window = int(numeric)
+        else:
+            blend_fraction = numeric
+        idx += 1
+        if idx + 1 < len(parts) and _is_step_number(parts[idx]) and _is_step_number(parts[idx + 1]):
+            range_start = int(parts[idx])
+            range_end = int(parts[idx + 1])
+
+    if range_start is not None and range_end is not None and range_start > range_end:
+        range_start, range_end = range_end, range_start
+
+    return _ManualCommand(
+        kind="smooth",
+        smooth_method=method,
+        smooth_blend_fraction=blend_fraction,
+        smooth_range_start=range_start,
+        smooth_range_end=range_end,
+        smooth_alpha=alpha,
+        smooth_window=window,
+    )
 
 
 def _create_run_dir(output_root: Path) -> Path:
@@ -58,21 +132,48 @@ def _create_run_dir(output_root: Path) -> Path:
     return run_dir
 
 
-def _prompt_action_batch(action_limit: float) -> tuple[float, int] | None:
+def _prompt_action_batch(
+    action_limit: float,
+    *,
+    default_smooth_method: SmoothMethod,
+    default_smooth_blend_fraction: float,
+    default_smooth_alpha: float,
+    default_smooth_window: int,
+) -> _ManualCommand | None:
     prompt_text = (
         f"Введите action или action + steps одной строкой: "
-        f"`<action>` или `<action> <steps>`, например `5` или `5 10` "
+        f"<action> или <action> <steps>, например 5 или 5 10 "
         f"(action в диапазоне [-{action_limit:.3f}, {action_limit:.3f}], "
-        "steps >= 1, q/quit/exit — завершить эпизод)"
+        "steps >= 1; s, сглаживание с последнего s; "
+        "s 500 1000, сглаживание шагов 500–1000; "
+        "s 0.6 500 1000, с коэффициентом; q/quit/exit, завершить эпизод)"
     )
     while True:
         raw = typer.prompt(prompt_text, default="0.0")
         text = raw.strip().lower()
         if text in {"q", "quit", "exit"}:
-            return None
+            return _ManualCommand(kind="quit")
+        if text in {"smooth", "s"} or text.startswith("smooth ") or text.startswith("s "):
+            parts = raw.strip().split()[1:]
+            parsed = _parse_smooth_command(parts)
+            if isinstance(parsed, str):
+                typer.echo(parsed)
+                continue
+            command = parsed or _ManualCommand(kind="smooth")
+            return replace(
+                command,
+                smooth_method=command.smooth_method or default_smooth_method,
+                smooth_blend_fraction=(
+                    command.smooth_blend_fraction
+                    if command.smooth_blend_fraction is not None
+                    else default_smooth_blend_fraction
+                ),
+                smooth_alpha=command.smooth_alpha if command.smooth_alpha is not None else default_smooth_alpha,
+                smooth_window=command.smooth_window or default_smooth_window,
+            )
         parts = raw.replace(",", " ").split()
         if len(parts) not in {1, 2}:
-            typer.echo("Нужно ввести одно или два значения: `<action>` или `<action> <steps>`")
+            typer.echo("Нужно ввести одно или два значения: <action> или <action> <steps>")
             continue
         try:
             action = float(parts[0])
@@ -94,7 +195,175 @@ def _prompt_action_batch(action_limit: float) -> tuple[float, int] | None:
             if repeat_count < 1:
                 typer.echo("Второе значение должно быть целым числом >= 1")
                 continue
-        return action, repeat_count
+        return _ManualCommand(kind="step", action=action, repeat_count=repeat_count)
+
+
+def _apply_trajectory_smoothing(
+    *,
+    env,
+    current_steps: list[dict[str, object]],
+    smooth_anchor: int,
+    episode_seed: int,
+    command: _ManualCommand,
+    html_path: Path,
+    episode_idx: int,
+    live_wind_cones: bool,
+    live_poll_ms: int,
+    live_generation: int,
+    default_smooth_method: SmoothMethod,
+    default_smooth_blend_fraction: float,
+    default_smooth_alpha: float,
+    default_smooth_window: int,
+) -> tuple[list[dict[str, object]], int, float | None, np.ndarray, bool, bool, int]:
+    # Сгладить участок траектории и пересчитать replay.
+    step_count = len(current_steps)
+    if step_count == 0:
+        typer.echo("Нечего сглаживать: эпизод ещё не содержит шагов.")
+        return (
+            current_steps,
+            smooth_anchor,
+            None,
+            np.empty(0, dtype=np.float32),
+            False,
+            False,
+            live_generation,
+        )
+
+    if command.smooth_range_start is not None and command.smooth_range_end is not None:
+        range_start_step = command.smooth_range_start
+        range_end_step = command.smooth_range_end
+        if range_start_step > range_end_step:
+            range_start_step, range_end_step = range_end_step, range_start_step
+        if range_start_step < 1 or range_end_step > step_count:
+            typer.echo(
+                f"Диапазон шагов должен быть в пределах 1–{step_count}, "
+                f"получено {range_start_step}–{range_end_step}."
+            )
+            return (
+                current_steps,
+                smooth_anchor,
+                None,
+                np.empty(0, dtype=np.float32),
+                False,
+                False,
+                live_generation,
+            )
+        range_start_idx = range_start_step - 1
+        range_end_idx = range_end_step
+        range_label = f"шаги {range_start_step}–{range_end_step}"
+        update_anchor = False
+    else:
+        if step_count <= smooth_anchor:
+            typer.echo("Нечего сглаживать: после последнего s ещё не было шагов.")
+            return (
+                current_steps,
+                smooth_anchor,
+                None,
+                np.empty(0, dtype=np.float32),
+                False,
+                False,
+                live_generation,
+            )
+        range_start_idx = smooth_anchor
+        range_end_idx = step_count
+        range_label = f"шаги {smooth_anchor + 1}–{step_count} (с последнего s)"
+        update_anchor = True
+
+    all_actions = [float(step["action"]) for step in current_steps]
+    segment_actions = all_actions[range_start_idx:range_end_idx]
+    if not segment_actions:
+        typer.echo("Пустой диапазон для сглаживания.")
+        return (
+            current_steps,
+            smooth_anchor,
+            None,
+            np.empty(0, dtype=np.float32),
+            False,
+            False,
+            live_generation,
+        )
+
+    before_stats = count_action_transitions(segment_actions)
+    blend_fraction = (
+        command.smooth_blend_fraction
+        if command.smooth_blend_fraction is not None
+        else default_smooth_blend_fraction
+    )
+    smoothed_segment, smooth_stats = smooth_actions(
+        segment_actions,
+        method=command.smooth_method or default_smooth_method,
+        blend_fraction=blend_fraction,
+        alpha=command.smooth_alpha if command.smooth_alpha is not None else default_smooth_alpha,
+        window=command.smooth_window or default_smooth_window,
+        action_limit=float(env.action_limit),
+    )
+    changed_steps = sum(
+        1
+        for before, after in zip(segment_actions, smoothed_segment, strict=False)
+        if abs(before - after) > 1e-6
+    )
+    mean_smoothed_action = float(np.mean(smoothed_segment)) if smoothed_segment else 0.0
+    replay_actions = (
+        all_actions[:range_start_idx]
+        + smoothed_segment
+        + all_actions[range_end_idx:]
+    )
+
+    typer.echo("")
+    if before_stats.transition_count == 0:
+        typer.echo(
+            "⚠ Все action на участке одинаковы, угол, скорее всего, от ветра, "
+            "а не от скачка action. Меняйте action на поворотах (например: "
+            "8 15 -> -2 15), затем снова s."
+        )
+    typer.echo(
+        f"Сглаживание {range_label} "
+        f"({command.smooth_method or default_smooth_method}, "
+        f"{len(segment_actions)} шагов, "
+        f"переходов={before_stats.transition_count}, "
+        f"макс. Δaction={before_stats.max_action_delta:.3f}, "
+        f"коэф.={blend_fraction:.2f}, "
+        f"рампа={smooth_stats.max_ramp_steps}/{smooth_stats.segment_steps} шагов, "
+        f"средн. action={mean_smoothed_action:+.4f}, "
+        f"изменено={changed_steps}) -> replay…"
+    )
+
+    replay_result = replay_episode_actions(
+        env,
+        seed=episode_seed,
+        actions=replay_actions,
+    )
+    current_steps = replay_result.steps
+    rewrite_env_current_trajectory(env, current_steps)
+    new_anchor = len(current_steps) if update_anchor else smooth_anchor
+    # Уникальный generation гарантирует, что live-viewer подхватит сглаженную траекторию
+    # (file:// часто кэширует ping-pong слоты с тем же URL).
+    live_generation = max(live_generation + 1, int(time.time() * 1000))
+    _update_live_html(
+        html_path=html_path,
+        env=env,
+        current_steps=current_steps,
+        episode_idx=episode_idx,
+        step_idx=max(len(current_steps) - 1, 0),
+        live_wind_cones=live_wind_cones,
+        live_poll_ms=live_poll_ms,
+        generation=live_generation,
+        smoothed=True,
+    )
+    typer.echo(
+        f"Replay завершён: шагов={len(current_steps)} "
+        f"total_reward={replay_result.total_reward:+.4f} "
+        f"terminated={replay_result.terminated} truncated={replay_result.truncated}"
+    )
+    return (
+        current_steps,
+        new_anchor,
+        replay_result.total_reward,
+        replay_result.final_obs,
+        replay_result.terminated,
+        replay_result.truncated,
+        live_generation,
+    )
 
 
 def _update_live_html(
@@ -106,6 +375,8 @@ def _update_live_html(
     step_idx: int,
     live_wind_cones: bool,
     live_poll_ms: int,
+    generation: int | None = None,
+    smoothed: bool = False,
 ) -> None:
     if not current_steps:
         return
@@ -119,9 +390,12 @@ def _update_live_html(
         label=f"manual · эпизод {episode_idx + 1}",
     )
     bounds = compute_trajectory_bounds([live_episode], world_bounds=env.world_bounds)
+    step_label = f"шаг {step_idx + 1}"
+    if smoothed:
+        step_label = f"{step_label} · сглажено"
     save_live_trajectory_update(
         html_path,
-        generation=step_idx + 1,
+        generation=generation if generation is not None else step_idx + 1,
         trajectory_traces=collect_trajectory_traces(
             env_idx=0,
             history=[],
@@ -130,7 +404,7 @@ def _update_live_html(
         ),
         title=(
             f"manual · эпизод {episode_idx + 1} · "
-            f"шаг {step_idx + 1}"
+            f"{step_label}"
         ),
         bounds=bounds,
         wind_traces=(
@@ -256,8 +530,33 @@ def manual_rollout(
     ),
     reward: str = REWARD_OPTION,
     obs: str = OBS_OPTION,
+    smooth_method: SmoothMethod = typer.Option(
+        "transition",
+        "--smooth-method",
+        help="Метод сглаживания: transition (весь участок с последнего s), ema, moving_average",
+    ),
+    smooth_blend_fraction: float = typer.Option(
+        0.6,
+        "--smooth-blend-fraction",
+        min=0.05,
+        max=1.0,
+        help="Доля каждого платo action под рампу (0.6 по умолчанию)",
+    ),
+    smooth_alpha: float = typer.Option(
+        0.25,
+        "--smooth-alpha",
+        min=0.01,
+        max=1.0,
+        help="Alpha для EMA-сглаживания",
+    ),
+    smooth_window: int = typer.Option(
+        8,
+        "--smooth-window",
+        min=1,
+        help="Окно для moving_average-сглаживания",
+    ),
 ) -> None:
-    """Интерактивный терминальный эпизод: человек выбирает action, среда пишет траекторию."""
+    # Интерактивный терминальный эпизод: человек выбирает action, среда пишет траекторию.
     get_reward_fn(reward)
     get_obs_spec(obs)
 
@@ -300,20 +599,16 @@ def manual_rollout(
     env = build_env(app_config.environment, app_config.wind, env_idx=0)
     html_path = trajectories_dir / "trajectories.html"
     if open_browser:
-        placeholder = build_placeholder_live_figure(0, env.world_bounds)
-        if live_wind_cones:
-            save_live_trajectory_update(
-                html_path,
-                generation=0,
-                trajectory_traces=[],
-                title="manual · ожидание данных…",
-                bounds=compute_trajectory_bounds([], world_bounds=env.world_bounds),
-                wind_traces=[],
-                wind_key=0,
-                poll_interval_ms=live_poll_ms,
-            )
-        else:
-            save_live_figure(placeholder, html_path, generation=0, poll_interval_ms=live_poll_ms)
+        save_live_trajectory_update(
+            html_path,
+            generation=0,
+            trajectory_traces=[],
+            title="manual · ожидание данных…",
+            bounds=compute_trajectory_bounds([], world_bounds=env.world_bounds),
+            wind_traces=[] if live_wind_cones else None,
+            wind_key=0 if live_wind_cones else None,
+            poll_interval_ms=live_poll_ms,
+        )
         webbrowser.open(html_path.resolve().as_uri())
     typer.echo(f"Run directory: {run_dir.resolve()}")
     typer.echo(f"Trajectories: {trajectories_dir.resolve()}")
@@ -332,19 +627,70 @@ def manual_rollout(
             obs_vec, _ = env.reset(seed=seed + episode_idx)
             episode_reward = 0.0
             step_idx = 0
+            smooth_anchor = 0
+            live_generation = 0
             current_steps: list[dict[str, object]] = []
             typer.echo("")
             typer.echo("=" * 80)
             typer.echo(f"Старт эпизода {episode_idx + 1}/{episodes}")
             typer.echo(f"Initial state: {env.render()}")
             typer.echo(f"Observation dim: {obs_vec.size}")
+            typer.echo(
+                "Команда s, с последнего s; s 500 1000, диапазон шагов; "
+                "пересчитывает физику, ветер, reward и live HTML."
+            )
 
             while True:
-                batch = _prompt_action_batch(float(env.action_limit))
-                if batch is None:
+                command = _prompt_action_batch(
+                    float(env.action_limit),
+                    default_smooth_method=smooth_method,
+                    default_smooth_blend_fraction=smooth_blend_fraction,
+                    default_smooth_alpha=smooth_alpha,
+                    default_smooth_window=smooth_window,
+                )
+                if command is None or command.kind == "quit":
                     typer.echo("Эпизод остановлен пользователем.")
                     return
-                action, repeat_count = batch
+
+                if command.kind == "smooth":
+                    (
+                        current_steps,
+                        smooth_anchor,
+                        replay_reward,
+                        obs_vec,
+                        terminated,
+                        truncated,
+                        live_generation,
+                    ) = _apply_trajectory_smoothing(
+                        env=env,
+                        current_steps=current_steps,
+                        smooth_anchor=smooth_anchor,
+                        episode_seed=seed + episode_idx,
+                        command=command,
+                        html_path=html_path,
+                        episode_idx=episode_idx,
+                        live_wind_cones=live_wind_cones,
+                        live_poll_ms=live_poll_ms,
+                        live_generation=live_generation,
+                        default_smooth_method=smooth_method,
+                        default_smooth_blend_fraction=smooth_blend_fraction,
+                        default_smooth_alpha=smooth_alpha,
+                        default_smooth_window=smooth_window,
+                    )
+                    if replay_reward is not None:
+                        episode_reward = replay_reward
+                    step_idx = len(current_steps)
+                    if terminated or truncated:
+                        typer.echo(
+                            f"Эпизод завершён после smooth: terminated={terminated} "
+                            f"truncated={truncated} steps={step_idx} "
+                            f"total_reward={episode_reward:+.4f}"
+                        )
+                        break
+                    continue
+
+                action = command.action
+                repeat_count = command.repeat_count
 
                 for repeat_idx in range(repeat_count):
                     next_obs, reward_value, terminated, truncated, info = env.step(
@@ -354,6 +700,7 @@ def manual_rollout(
                     if step_record:
                         current_steps.append(step_record)
                         if repeat_count == 1:
+                            live_generation += 1
                             _update_live_html(
                                 html_path=html_path,
                                 env=env,
@@ -362,6 +709,7 @@ def manual_rollout(
                                 step_idx=step_idx,
                                 live_wind_cones=live_wind_cones,
                                 live_poll_ms=live_poll_ms,
+                                generation=live_generation,
                             )
                     episode_reward += float(reward_value)
                     _print_step_state(
@@ -384,6 +732,7 @@ def manual_rollout(
                         )
                         break
                 if repeat_count > 1 and current_steps:
+                    live_generation += 1
                     _update_live_html(
                         html_path=html_path,
                         env=env,
@@ -392,6 +741,7 @@ def manual_rollout(
                         step_idx=step_idx - 1,
                         live_wind_cones=live_wind_cones,
                         live_poll_ms=live_poll_ms,
+                        generation=live_generation,
                     )
                 if terminated or truncated:
                     break

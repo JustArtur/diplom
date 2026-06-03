@@ -1,9 +1,8 @@
-"""Интерполятор ветрового поля ERA5 (u, v, w) в локальных метровых координатах.
-
-Тяжёлые массивы интерполятора кэшируются в отдельный `.npy`-файл и
-подключаются через `np.memmap`, чтобы несколько процессов могли разделять
-одну файловую копию данных вместо дублирования памяти.
-"""
+# Интерполятор ветрового поля ERA5 (u, v, w) в локальных метровых координатах.
+#
+# Тяжёлые массивы интерполятора кэшируются в отдельный .npy-файл и
+# подключаются через np.memmap, чтобы несколько процессов могли разделять
+# одну файловую копию данных вместо дублирования памяти.
 
 from __future__ import annotations
 
@@ -24,40 +23,39 @@ from diplom.world import WorldBounds, world_bounds_from_axes
 from diplom.wind.trilinear import RegularGrid4DSampler
 
 
-# ──────────────────── Конвертация вертикальной скорости ────────────────────
-
+# Конвертация вертикальной скорости
 _R_DRY_AIR = 287.058  # Дж/(кг·К)
 _GRAVITY = 9.80665  # м/с²
 
 
 def omega_to_w_mps_scalar(omega_pa_s: float, pressure_hpa: float, temperature_k: float) -> float:
-    """Scalar-версия `omega_to_w_mps` для hot path (одна точка после интерполяции)."""
+    # Scalar-версия omega_to_w_mps для hot path (одна точка после интерполяции).
     p_pa = float(pressure_hpa) * 100.0
     safe_p = p_pa if p_pa > 1.0 else 1.0
     return -float(omega_pa_s) * _R_DRY_AIR * float(temperature_k) / (safe_p * _GRAVITY)
 
 
 def omega_to_w_mps(omega_pa_s: np.ndarray, pressure_hpa: np.ndarray, temperature_k: np.ndarray, ) -> np.ndarray:
-    """Конвертация давленческой скорости omega (Па/с) → вертикальная скорость w (м/с).
-
-    Из уравнения гидростатики:  dp = −ρ·g·dz
-    Отсюда:  ω = dp/dt = −ρ·g·(dz/dt) = −ρ·g·w
-    Значит:  w = −ω / (ρ·g)
-
-    Плотность по уравнению состояния идеального газа:  p = p / (Rₐ·T)
-    Подставляя:
-        w = −ω · Rₐ · T / (p · g)
-
-    где Rₐ = 287.058 Дж/(кг·К) — удельная газовая постоянная сухого воздуха,
-        g = 9.80665 м/с².
-
-    Положительное w = восходящее движение.
-    """
+    # Конвертация давленческой скорости omega (Па/с) -> вертикальная скорость w (м/с).
+    #
+    # Из уравнения гидростатики:  dp = −ρ·g·dz
+    # Отсюда:  ω = dp/dt = −ρ·g·(dz/dt) = −ρ·g·w
+    # Значит:  w = −ω / (ρ·g)
+    #
+    # Плотность по уравнению состояния идеального газа:  p = p / (Rₐ·T)
+    # Подставляя:
+    # w = −ω · Rₐ · T / (p · g)
+    #
+    # где Rₐ = 287.058 Дж/(кг·К), удельная газовая постоянная сухого воздуха,
+    # g = 9.80665 м/с².
+    #
+    # Положительное w = восходящее движение.
+    #
 
     r_dry = _R_DRY_AIR
     g = _GRAVITY
 
-    p_pa = np.asarray(pressure_hpa, dtype=np.float32) * np.float32(100.0)  # гПа → Па
+    p_pa = np.asarray(pressure_hpa, dtype=np.float32) * np.float32(100.0)  # гПа -> Па
     safe_p = np.where(p_pa > 1.0, p_pa, np.float32(1.0))  # защита от деления на 0
     omega = np.nan_to_num(np.asarray(omega_pa_s, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
     temp = np.nan_to_num(np.asarray(temperature_k, dtype=np.float32), nan=288.15, posinf=288.15, neginf=288.15)
@@ -68,8 +66,8 @@ def omega_to_w_mps(omega_pa_s: np.ndarray, pressure_hpa: np.ndarray, temperature
     )
 
 
-# ──────────────────── Имена переменных датасета (внутренние) ────────────────────
-# Эти строки — детали конкретного ERA5 NetCDF-файла, а не публичный контракт модуля.
+# Имена переменных датасета (внутренние)
+# Эти строки, детали конкретного ERA5 NetCDF-файла, а не публичный контракт модуля.
 
 _WIND_U_NAME = "u"
 _WIND_V_NAME = "v"
@@ -81,8 +79,7 @@ _LEVEL_NAME = "pressure_level"
 _TIME_NAME = "valid_time"
 
 
-# ──────────────────── Кэш интерполятора ────────────────────
-
+# Кэш интерполятора
 _CACHE_VALUE_SUFFIX = ".wind-cache.npy"
 _CACHE_META_SUFFIX = ".wind-cache.json"
 
@@ -151,7 +148,7 @@ def _write_cache(
     w_data: np.ndarray,
     t_data: np.ndarray,
 ) -> None:
-    """Собрать кэш интерполятора в одном memmap-файле."""
+    # Собрать кэш интерполятора в одном memmap-файле.
     token = uuid.uuid4().hex
     tmp_value_path = value_path.with_name(f".{value_path.name}.{token}.tmp")
     tmp_meta_path = meta_path.with_name(f".{meta_path.name}.{token}.tmp")
@@ -192,13 +189,13 @@ def _write_cache(
 
 
 def ensure_wind_interpolator_cache(source_path: Path) -> tuple[Path, Path]:
-    """Обеспечить наличие валидного кэша интерполятора в ``data/cache/wind/``.
-
-    Не создаёт объект интерполяции — только записывает memmap-пакет и метаданные,
-    если кэша ещё нет или источник изменился.
-
-    Возвращает пути к файлам значений и метаданных для ``WindInterpolator``.
-    """
+    # Обеспечить наличие валидного кэша интерполятора в data/cache/wind/.
+    #
+    # Не создаёт объект интерполяции, только записывает memmap-пакет и метаданные,
+    # если кэша ещё нет или источник изменился.
+    #
+    # Возвращает пути к файлам значений и метаданных для WindInterpolator.
+    #
     value_path = _cache_value_path(source_path)
     meta_path = _cache_meta_path(source_path)
     if _is_cache_valid(source_path, value_path, meta_path):
@@ -254,30 +251,27 @@ def ensure_wind_interpolator_cache(source_path: Path) -> tuple[Path, Path]:
     return value_path, meta_path
 
 
-# ──────────────────── Результат интерполяции ────────────────────
-
+# Результат интерполяции
 @dataclass(frozen=True)
 class WindSample:
-    """Результат интерполяции ветра в одной точке пространства-времени."""
+    # Результат интерполяции ветра в одной точке пространства-времени.
 
     u: float            # западно-восточная компонента (м/с)
     v: float            # южно-северная компонента (м/с)
-    w: float            # вертикальная компонента (м/с, вверх — положительно)
+    w: float            # вертикальная компонента (м/с, вверх, положительно)
     temperature: float  # температура воздуха (K)
     pressure: float     # давление (гПа)
 
 
-# ──────────────────── Интерполятор ────────────────────
-
-
+# Интерполятор
 @dataclass
 class WindInterpolator:
-    """Интерполятор ERA5: (x_м, y_м, z_м, time) → (u, v, w) м/с.
-
-    При инициализации данные загружаются из кэша на диске, а не из NetCDF,
-    поэтому несколько subprocess-ов могут разделять одну файловую копию
-    массивов через `memmap`.
-    """
+    # Интерполятор ERA5: (x_м, y_м, z_м, time) -> (u, v, w) м/с.
+    #
+    # При инициализации данные загружаются из кэша на диске, а не из NetCDF,
+    # поэтому несколько subprocess-ов могут разделять одну файловую копию
+    # массивов через memmap.
+    #
 
     data: np.ndarray
     env_idx: int | None
@@ -318,7 +312,7 @@ class WindInterpolator:
         self._init_grid_sampler()
 
     def _init_grid_sampler(self) -> None:
-        """Собрать trilinear-сэмплер поверх memmap-кэша."""
+        # Собрать trilinear-сэмплер поверх memmap-кэша.
         self._lat_min = float(self.latitude_axis_deg[0])
         self._lat_max = float(self.latitude_axis_deg[-1])
         self._lon_min = float(self.longitude_axis_deg[0])
@@ -358,8 +352,7 @@ class WindInterpolator:
     def time_max(self) -> np.datetime64:
         return self._time_max
 
-    # ──────────────────── Фабрика ────────────────────
-
+    # Фабрика
     @classmethod
     def from_file(
         cls,
@@ -368,7 +361,7 @@ class WindInterpolator:
         origin_lat: float | None = None,
         origin_lon: float | None = None,
     ) -> WindInterpolator:
-        """Открыть или создать кэш и затем построить интерполятор поверх него."""
+        # Открыть или создать кэш и затем построить интерполятор поверх него.
         value_path, meta_path = ensure_wind_interpolator_cache(path)
         return cls._from_cache(
             value_path=value_path,
@@ -419,10 +412,9 @@ class WindInterpolator:
             longitude_axis_deg=np.asarray(meta["longitude_axis_deg"], dtype=np.float64),
         )
 
-    # ──────────────────── Преобразование координат ────────────────────
-
+    # Преобразование координат
     def _xy_to_latlon(self, x_m: np.ndarray, y_m: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Локальные метры (x, y) → (lat, lon) относительно origin."""
+        # Локальные метры (x, y) -> (lat, lon) относительно origin.
         m_per_lat = meters_per_deg_lat(self.origin_lat)
         m_per_lon = meters_per_deg_lon(self.origin_lat)
         raw_lat = self.origin_lat + y_m / m_per_lat
@@ -449,7 +441,7 @@ class WindInterpolator:
         return lat.astype(np.float64), lon.astype(np.float64)
 
     def _xy_to_latlon_scalar(self, x_m: float, y_m: float) -> tuple[float, float]:
-        """Локальные метры (x, y) → (lat, lon) для одной точки без numpy-массивов."""
+        # Локальные метры (x, y) -> (lat, lon) для одной точки без numpy-массивов.
         raw_lat = self.origin_lat + y_m / self._m_per_lat
         raw_lon = self.origin_lon + x_m / self._m_per_lon
         lat = min(max(raw_lat, self._lat_min), self._lat_max)
@@ -472,29 +464,28 @@ class WindInterpolator:
         return lat, lon
 
     def _z_to_pressure_scalar(self, z_m: float) -> float:
-        """Высота (м) → давление (гПа) для одной точки."""
+        # Высота (м) -> давление (гПа) для одной точки.
         p = altitude_to_pressure_hpa_scalar(z_m)
         return min(max(p, self._p_clip_min), self._p_clip_max)
 
     def _time_to_float_scalar(self, time: np.datetime64) -> float:
-        """datetime64 → float64 (наносекунды) для одной точки."""
+        # datetime64 -> float64 (наносекунды) для одной точки.
         t_ns = float(np.datetime64(time, "ns").astype(np.float64))
         return min(max(t_ns, self._time_min_float), self._time_max_float)
 
     def _z_to_pressure(self, z_m: np.ndarray) -> np.ndarray:
-        """Высота (м) → давление (гПа) с кламп к диапазону датасета."""
+        # Высота (м) -> давление (гПа) с кламп к диапазону датасета.
         p = altitude_to_pressure_hpa(z_m).astype(np.float64)
         return np.clip(p, self._p_clip_min, self._p_clip_max)
 
     def _time_to_float(self, time: np.ndarray) -> np.ndarray:
-        """datetime64 → float64 (наносекунды) с кламп к диапазону датасета."""
+        # datetime64 -> float64 (наносекунды) с кламп к диапазону датасета.
         t_ns = np.asarray(time, dtype="datetime64[ns]").astype(np.float64)
         return np.clip(t_ns, self._time_min_float, self._time_max_float)
 
-    # ──────────────────── Публичный API ────────────────────
-
+    # Публичный API
     def vector_at(self, x: float, y: float, z: float, time: np.datetime64) -> WindSample:
-        """Вектор ветра (u, v, w) м/с, температура (K) и давление (гПа) в заданной точке."""
+        # Вектор ветра (u, v, w) м/с, температура (K) и давление (гПа) в заданной точке.
         lat, lon = self._xy_to_latlon_scalar(x, y)
         level = self._z_to_pressure_scalar(z)
         t = self._time_to_float_scalar(time)
@@ -504,7 +495,7 @@ class WindInterpolator:
         return WindSample(u=float(u), v=float(v), w=w, temperature=float(temp), pressure=level)
 
     def batch_vector_at(self, x: np.ndarray, y: np.ndarray, z: np.ndarray, time: np.ndarray) -> np.ndarray:
-        """Векторы ветра (u, v, w) м/с для батча точек. Shape: (n, 3)."""
+        # Векторы ветра (u, v, w) м/с для батча точек. Shape: (n, 3).
         lat, lon = self._xy_to_latlon(x, y)
         level = self._z_to_pressure(z)
         t = self._time_to_float(time)

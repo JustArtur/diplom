@@ -1,4 +1,4 @@
-"""Общие CLI-опции и сборка AppConfig для train/profile PPO."""
+# Общие CLI-опции и сборка AppConfig для train/profile PPO.
 
 from __future__ import annotations
 
@@ -42,13 +42,13 @@ DEFAULT_VERBOSE = TrainingConfig().verbose
 DEFAULT_TARGET_REACH_RADIUS = TARGET_REACH_RADIUS
 
 _LOGDIR_HELP = (
-    "Родительский каталог; run — {logdir}/{experiment|имя_датасета}/PPO_N "
+    "Родительский каталог; run, {logdir}/{experiment|имя_датасета}/PPO_N "
     "(модель, TensorBoard, trajectories внутри run-каталога; "
-    "имя датасета — NetCDF без .nc; см. --experiment)."
+    "имя датасета, NetCDF без .nc; см. --experiment)."
 )
 _START_TIME_HELP = (
     "Момент старта симуляции (ISO 8601). "
-    "По умолчанию — первый шаг времени из датасета ERA5."
+    "По умолчанию, первый шаг времени из датасета ERA5."
 )
 
 START_TIME_OPTION = typer.Option(None, "--start-time", help=_START_TIME_HELP)
@@ -70,7 +70,7 @@ VERBOSE_OPTION = typer.Option(
     DEFAULT_VERBOSE,
     "--verbose",
     "-v",
-    help="Логирование PPO в консоль (SB3): 0 — тихо, 1 — таблица метрик",
+    help="Логирование PPO в консоль (SB3): 0, тихо, 1, таблица метрик",
 )
 TARGET_RADIUS_OPTION = typer.Option(
     DEFAULT_TARGET_REACH_RADIUS,
@@ -114,7 +114,7 @@ EXPERIMENT_OPTION = typer.Option(
     "--experiment",
     "-x",
     help=(
-        "Имя каталога run-а под --logdir; пусто — r-{reward}_o-{obs}_m-{model} "
+        "Имя каталога run-а под --logdir; пусто, r-{reward}_o-{obs}_m-{model} "
         "(нужно то же имя для --resume)"
     ),
 )
@@ -211,7 +211,7 @@ def ppo_experiment_name(
     model_name: str,
     experiment_name: str | None = None,
 ) -> str:
-    """Имя run-а: явный --experiment или r-{reward}_o-{obs}_m-{model}."""
+    # Имя run-а: явный --experiment или r-{reward}_o-{obs}_m-{model}.
     if experiment_name and experiment_name.strip():
         return experiment_name.strip()
     return f"r-{reward_name}_o-{obs_name}_m-{model_name}"
@@ -304,7 +304,7 @@ def balloon_config(start_time: datetime | None = None) -> BalloonConfig:
 
 
 def build_default_app_config(*, start_time: datetime | None = None) -> AppConfig:
-    """Минимальный AppConfig для viz/rollout без параметров обучения."""
+    # Минимальный AppConfig для viz/rollout без параметров обучения.
     return build_ppo_app_config(
         ppo_training_options(
             total_timesteps=DEFAULT_TIMESTEPS,

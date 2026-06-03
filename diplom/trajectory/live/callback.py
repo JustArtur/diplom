@@ -28,22 +28,11 @@ from diplom.trajectory.steps_io import (
 
 
 class TrajectoryVisualizationCallback(BaseCallback):
-    """Асинхронно рендерит HTML-файлы траекторий в отдельном процессе.
-
-    Шаги эпизодов пишутся в JSONL в subprocess среды (без ``env_method`` на
-    каждом шаге). Главный процесс раз в rollout забирает пути к файлам и
-    ставит задачу воркеру рендера.
-
-    По умолчанию (``combined_html=True``) все среды одного обучения рендерятся
-    в один ``trajectories.html``. При ``combined_html=False`` — отдельный
-    ``env_XXX.html`` на каждый env-процесс (история + текущий эпизод).
-
-    Args:
-        output_dir: каталог для HTML-файлов (создаётся автоматически).
-        combined_html: один HTML на всё обучение или отдельный файл на env-процесс.
-        open_in_browser: открыть viewer в браузере при старте обучения.
-        verbose: 0 — тихо, 1 — печатать сводку после каждого rollout.
-    """
+    # Рендер HTML траекторий в фоне.
+    #
+    # Среда пишет шаги в JSONL, раз в rollout callback отдаёт файлы воркеру.
+    # combined_html: один trajectories.html или отдельный env_XXX.html на среду.
+    #
 
     def __init__(
         self,
@@ -107,7 +96,7 @@ class TrajectoryVisualizationCallback(BaseCallback):
             if self.verbose:
                 mode = "shared socket" if isinstance(self._render_queue, str) else "local worker"
                 print(  # noqa: T201
-                    f"[trajectory_viz] рендер включён ({mode}) → {self._output_dir.resolve()}"
+                    f"[trajectory_viz] рендер включён ({mode}), каталог {self._output_dir.resolve()}"
                 )
         except Exception:  # noqa: BLE001
             traceback.print_exc()
@@ -126,7 +115,7 @@ class TrajectoryVisualizationCallback(BaseCallback):
         cleanup_steps_dir(self._output_dir)
 
     def _on_rollout_end(self) -> None:
-        """Собрать пути к JSONL из subprocess и передать воркеру рендера."""
+        # Собрать пути к JSONL из subprocess и передать воркеру рендера.
         if self._render_queue is None:
             return
 
@@ -222,7 +211,7 @@ def _open_trajectory_viewers(
     world_bounds: WorldBounds | None,
     combined_html: bool = True,
 ) -> None:
-    """Создать live-viewer при необходимости и открыть вкладки в браузере."""
+    # Создать live-viewer при необходимости и открыть вкладки в браузере.
     from diplom.viz.plotly.episode_figure import (
         build_placeholder_combined_figure,
         build_placeholder_live_figure,
@@ -246,7 +235,7 @@ def _open_trajectory_viewers(
 
 
 def _get_world_bounds(training_env) -> WorldBounds | None:
-    """Попробовать вытащить общие границы мира из VecEnv."""
+    # Попробовать вытащить общие границы мира из VecEnv.
     if training_env is None:
         return None
 

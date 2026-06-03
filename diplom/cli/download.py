@@ -20,7 +20,7 @@ def download(
         "--outfile",
         "-o",
         help="Путь к итоговому NetCDF; по умолчанию data/training/era5_{…}.nc "
-        "(с --preview — data/preview/)",
+        "(с --preview, data/preview/)",
     ),
     north: float = typer.Option(DEFAULT_DOWNLOAD_CONFIG.north, help="Северная граница широты"),
     west: float = typer.Option(DEFAULT_DOWNLOAD_CONFIG.west, help="Западная граница долготы"),
@@ -55,7 +55,7 @@ def download(
         "--workers", "-j",
         min=1,
         help="Параллельная загрузка чанками по 24 временных точки с последующей склейкой "
-        "(2–4 обычно безопасно). Без флага — один запрос CDS сразу в outfile.",
+        "(2–4 обычно безопасно). Без флага, один запрос CDS сразу в outfile.",
     ),
     hour_step: int = typer.Option(
         DEFAULT_DOWNLOAD_CONFIG.hour_step,
@@ -67,14 +67,14 @@ def download(
     preview: bool = typer.Option(
         False,
         "--preview",
-        help="Сохранить в data/preview/ для просмотра ветра (по умолчанию — data/training/).",
+        help="Сохранить в data/preview/ для просмотра ветра (по умолчанию, data/training/).",
     ),
     download_all: bool = typer.Option(
         False,
         "--all",
         "-a",
         help="Скачать все датасеты из data/training/datasets_manifest.toml "
-        "(пропускать уже существующие; --force — перекачать).",
+        "(пропускать уже существующие; --force, перекачать).",
     ),
     manifest: Path | None = typer.Option(
         None,
@@ -87,16 +87,16 @@ def download(
         help="Перекачать, даже если NetCDF уже есть (удаляет файл и чанки).",
     ),
 ) -> None:
-    """Скачать подмножество ERA5 в NetCDF.
-
-    Один регион — укажите --north/--south/--west/--east и --start/--end.
-
-    Все обязательные training-датасеты:
-
-    \b
-      diplom download --all --hour-step 8 -j 15
-      diplom download --all --force --hour-step 8 -j 15
-    """
+    # Скачать подмножество ERA5 в NetCDF.
+    #
+    # Один регион, укажите --north/--south/--west/--east и --start/--end.
+    #
+    # Все обязательные training-датасеты:
+    #
+    # 
+    # diplom download --all --hour-step 8 -j 15
+    # diplom download --all --force --hour-step 8 -j 15
+    #
     from diplom.data.era5_download import download_era5_pressure
     from diplom.data.era5_manifest import download_training_manifest, load_training_manifest
 

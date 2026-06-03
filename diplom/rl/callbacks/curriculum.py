@@ -1,4 +1,4 @@
-"""Куррикулумы обучения PPO и расписание ent_coef."""
+# Куррикулумы обучения PPO и расписание ent_coef.
 
 from __future__ import annotations
 
@@ -83,26 +83,26 @@ def log_episode_length_curriculum_plan(
     *,
     start_timesteps: int = 0,
 ) -> None:
-    """Печатает таблицу этапов max_episode_steps в stdout при старте обучения."""
+    # Печатает таблицу этапов max_episode_steps в stdout при старте обучения.
     normalized = normalize_episode_length_curriculum_stages(stages)
     print("[episode_length_curriculum] max_episode_steps по global timesteps:")  # noqa: T201
     for idx, stage in enumerate(normalized):
         until_label = "∞" if stage.until_timesteps is None else f"{stage.until_timesteps:,}"
         print(  # noqa: T201
             f"  этап {idx + 1}: {stage.from_timesteps:,} ≤ timesteps < {until_label} "
-            f"→ max_episode_steps={stage.max_episode_steps:,}"
+            f"-> max_episode_steps={stage.max_episode_steps:,}"
         )
 
     active_idx = resolve_episode_length_stage_index(start_timesteps, normalized)
     active = normalized[active_idx]
     print(  # noqa: T201
-        f"  сейчас: timesteps={start_timesteps:,} → этап {active_idx + 1}, "
+        f"  сейчас: timesteps={start_timesteps:,} -> этап {active_idx + 1}, "
         f"max_episode_steps={active.max_episode_steps:,}"
     )
 
 
 class TrainEpisodeLengthCurriculumCallback(BaseCallback):
-    """Синхронно повышает max_episode_steps во всех средах по числу шагов обучения."""
+    # Синхронно повышает max_episode_steps во всех средах по числу шагов обучения.
 
     def __init__(
         self,
@@ -143,10 +143,9 @@ class TrainEpisodeLengthCurriculumCallback(BaseCallback):
             )
 
 
-# ── Entropy coefficient schedule ──
-
+# Entropy coefficient schedule
 class EntCoefScheduleCallback(BaseCallback):
-    """ent_coef: start → end за decay_timesteps (linear)."""
+    # ent_coef: start -> end за decay_timesteps (linear).
 
     def __init__(
         self,

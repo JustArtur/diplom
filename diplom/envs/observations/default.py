@@ -1,9 +1,4 @@
-"""Obs ``default`` — полный вектор наблюдений с probe-ветром по высотам.
-
-CLI: ``--obs default``   OBS_DIM = 33
-
-Probe-ветер предвычисляется в BalloonEnv одним ``batch_vector_at`` (см. ``wind_probes``).
-"""
+# Obs default, 33 признака с probe-ветром.
 
 from __future__ import annotations
 

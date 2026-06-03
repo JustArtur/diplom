@@ -1,30 +1,4 @@
-"""Reward ``long_horizon`` — shaping под долгосрочную навигацию стратостата.
-
-CLI: ``--reward long_horizon``
-
-Идея
-----
-Аэростат не может на каждом шаге приближаться к цели: ветер иногда неизбежно
-относит назад. Агент должен терпеть временный drift ради подбора высоты и
-попутного ветра. Награда не требует положительного знака на каждом шаге, но
-различает «правильную подготовку» и бессмысленное отступление.
-
-Отличия от ``simple``
----------------------
-- Potential-Based Reward Shaping (PBRS) по XY-дистанции — dense сигнал
-  прогресса без смещения оптимальной политики (``PBRS_GAMMA`` = gamma PPO).
-- Слабее штраф за отрицательный progress (neg coef ↓).
-- Сильнее wind_align / wind_align_delta / wind_scan — награда за позиционирование.
-- ``wind_align`` не обнуляется при серии отрицательного progress.
-- Бонус за попутный ветер на большой дистанции (ожидание / сканирование слоёв).
-- Усилен ``best_distance`` — рекорд близости важнее текущего drift.
-- Без distance, regression, adverse_wind, z_stick, idle штрафов.
-
-Когда использовать
-------------------
-Основной эксперимент, когда ``simple`` даёт слишком myopic политику и агент
-боится отступать от цели ради смены высоты.
-"""
+# Reward long_horizon: shaping под длинный горизонт.
 
 from __future__ import annotations
 
@@ -108,7 +82,7 @@ def _asymmetric_progress_term(
 
 
 def _pbrs_term(prev_horizontal: float, curr_horizontal: float) -> float:
-    """PBRS: gamma * Phi(s') - Phi(s), Phi(s) = -coef * dist / scale."""
+    # PBRS: gamma * Phi(s') - Phi(s), Phi(s) = -coef * dist / scale.
     delta = prev_horizontal - PBRS_GAMMA * curr_horizontal
     return PBRS_COEF * delta / PBRS_DISTANCE_SCALE
 

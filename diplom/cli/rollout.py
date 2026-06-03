@@ -48,7 +48,7 @@ def rollout(
         "--plot",
         "-p",
         help="Путь для сохранения интерактивного 3D-графика траекторий (HTML). "
-             "Если не указан — график не строится.",
+             "Если не указан, график не строится.",
     ),
     plot_wind_cones: bool = typer.Option(
         False,
@@ -65,7 +65,7 @@ def rollout(
     reward: str = REWARD_OPTION,
     obs: str = OBS_OPTION,
 ) -> None:
-    """Запустить rollout обученной модели и собрать траектории эпизодов."""
+    # Запустить rollout обученной модели и собрать траектории эпизодов.
     get_reward_fn(reward)
     get_obs_spec(obs)
     from diplom.sim.rollout import rollout_episodes

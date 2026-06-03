@@ -1,29 +1,6 @@
-"""Реестр obs-модулей: ``diplom.envs.observations.<name>`` → ``build_obs``.
-
-Каждый модуль — самостоятельная модель наблюдений с собственным ``OBS_DIM``.
-Выбор: ``diplom train-ppo --obs <name>`` (должен совпадать с размерностью
-входа PPO при resume/load checkpoint).
-
-Общий контракт
---------------
-``build_obs(wind_interp, step, ctx) -> np.ndarray`` shape ``(OBS_DIM,)``
-
-- ``wind_interp`` — WindInterpolator; probe-модели опрашивают ветер на
-  разных высотах через ``vector_at(x, y, z_probe, sim_time)``.
-- ``step`` — SimResult (позиция, ветер на текущей Z, физика, цель).
-- ``ctx`` — ObsStepContext: sim_time, границы Z, normalize, RewardState,
-  wind_align_scale (см. ``types.py``).
-
-Модуль обязан экспортировать
-----------------------------
-- ``build_obs`` — функция сборки вектора.
-- ``OBS_DIM`` — int, размер ``observation_space``.
-
-Доступные модели
-----------------
-default  — OBS_DIM=33, probe wind_toward на 8 высотах + nav + temporal
-minimal  — OBS_DIM=24, без probe-слоёв и layer gradient
-"""
+# Реестр obs-моделей (default, minimal). Выбор: diplom train-ppo --obs <name>.
+#
+# Каждый модуль экспортирует build_obs и OBS_DIM. Размерность должна совпадать с чекпоинтом.
 
 from __future__ import annotations
 

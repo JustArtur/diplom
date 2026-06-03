@@ -29,20 +29,20 @@ def viz_real(
     data_dir: Path = DATA_DIR_OPTION,
     manifest_path: Path = MANIFEST_OPTION,
 ) -> None:
-    """Запуск PyVista-визуализации на реальном ветре.
-
-    Примеры:
-
-    \b
-      # Датасет по умолчанию (DEFAULT_ERA5_OUTFILE)
-      diplom viz-real
-
-    \b
-      # Конкретный датасет по имени, пути или id из манифеста
-      diplom viz-real --dataset era5_35_-5_50_110_2024-10-05_2024-10-19
-      diplom viz-real --dataset #1
-      diplom viz-real --dataset data/training/era5_....nc --start-time 2024-10-05T12:00:00
-    """
+    # Запуск PyVista-визуализации на реальном ветре.
+    #
+    # Примеры:
+    #
+    # 
+    # # Датасет по умолчанию (DEFAULT_ERA5_OUTFILE)
+    # diplom viz-real
+    #
+    # 
+    # # Конкретный датасет по имени, пути или id из манифеста
+    # diplom viz-real --dataset era5_35_-5_50_110_2024-10-05_2024-10-19
+    # diplom viz-real --dataset #1
+    # diplom viz-real --dataset data/training/era5_....nc --start-time 2024-10-05T12:00:00
+    #
     from diplom.viz.pyvista.runner import VisualizationRunner
 
     app_config = build_default_app_config(
@@ -58,7 +58,7 @@ def wind_viz(
     wind_file: Optional[Path] = typer.Option(
         None,
         "--wind-file", "-f",
-        help="Один ERA5 NetCDF; без флага — все *.nc из --data-dir",
+        help="Один ERA5 NetCDF; без флага, все *.nc из --data-dir",
     ),
     data_dir: Path = typer.Option(
         ERA5_PREVIEW_DATA_DIR,
@@ -70,7 +70,7 @@ def wind_viz(
         "--time", "-t",
         help=(
             "Временна́я метка среза ERA5 (ISO 8601, например 2024-07-01T12:00:00). "
-            "Если не задано — используется первый временной шаг датасета."
+            "Если не задано, используется первый временной шаг датасета."
         ),
         formats=[
             "%Y-%m-%dT%H:%M:%S",
@@ -122,38 +122,38 @@ def wind_viz(
         help="Пересоздать HTML-графики, даже если они уже существуют",
     ),
 ) -> None:
-    """Построить интерактивные 3D-графы поля ветра ERA5.
-
-    По умолчанию обходит все ``*.nc`` в ``data/preview/`` и сохраняет HTML в ``runs/wind/``.
-    Заголовок графика совпадает с именем датасета; уже существующие файлы пропускаются
-    (используйте ``--force`` для пересоздания).
-
-    Примеры:
-
-    \b
-      # Все preview-датасеты
-      diplom wind-viz
-
-    \b
-      # Список доступных временных меток (все датасеты или один файл)
-      diplom wind-viz --list-times
-
-    \b
-      # Параллельно 4 процесса
-      diplom wind-viz -j 4 --stride-lat 2 --stride-lon 2
-
-    \b
-      # Один файл, конкретное время
-      diplom wind-viz -f data/preview/era5_....nc --time 2024-07-01T12:00:00 --stride-lat 2
-
-    \b
-      # Датасеты из каталога обучения
-      diplom wind-viz --data-dir data/training
-
-    \b
-      # Пересоздать все графики (игнорировать уже существующие)
-      diplom wind-viz --force
-    """
+    # Построить интерактивные 3D-графы поля ветра ERA5.
+    #
+    # По умолчанию обходит все *.nc в data/preview/ и сохраняет HTML в runs/wind/.
+    # Заголовок графика совпадает с именем датасета; уже существующие файлы пропускаются
+    # (используйте --force для пересоздания).
+    #
+    # Примеры:
+    #
+    # 
+    # # Все preview-датасеты
+    # diplom wind-viz
+    #
+    # 
+    # # Список доступных временных меток (все датасеты или один файл)
+    # diplom wind-viz --list-times
+    #
+    # 
+    # # Параллельно 4 процесса
+    # diplom wind-viz -j 4 --stride-lat 2 --stride-lon 2
+    #
+    # 
+    # # Один файл, конкретное время
+    # diplom wind-viz -f data/preview/era5_....nc --time 2024-07-01T12:00:00 --stride-lat 2
+    #
+    # 
+    # # Датасеты из каталога обучения
+    # diplom wind-viz --data-dir data/training
+    #
+    # 
+    # # Пересоздать все графики (игнорировать уже существующие)
+    # diplom wind-viz --force
+    #
     from diplom.viz.plotly.wind import (
         WindPlotRenderJob,
         list_available_times,
@@ -195,10 +195,10 @@ def wind_viz(
     for dataset_path in dataset_paths:
         plot_path = wind_plot_html_path(dataset_path, output)
         if plot_path.exists() and not force:
-            typer.echo(f"Пропуск {dataset_path.name}: график уже есть → {plot_path}")
+            typer.echo(f"Пропуск {dataset_path.name}: график уже есть -> {plot_path}")
             continue
         if plot_path.exists() and force:
-            typer.echo(f"Пересоздаю {dataset_path.name}: --force → {plot_path}")
+            typer.echo(f"Пересоздаю {dataset_path.name}: --force -> {plot_path}")
         jobs.append(
             WindPlotRenderJob(
                 dataset_path=dataset_path,
@@ -248,7 +248,7 @@ def wind_viz(
     if len(steerability_rows) > 1:
         typer.echo("")
         typer.echo(
-            "Сравнение датасетов по Steerability Score (выше — лучше для RL-обучения):"
+            "Сравнение датасетов по Steerability Score (выше, лучше для RL-обучения):"
         )
         typer.echo(
             f"{'Датасет':<42} {'Score':>6} {'D_loc':>6} {'H':>6} {'C':>6} {'T':>6}"

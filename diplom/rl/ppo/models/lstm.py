@@ -1,41 +1,4 @@
-"""PPO-модель ``lstm`` — RecurrentPPO с MlpLstmPolicy (sb3-contrib).
-
-CLI: ``--model lstm``
-
-Архитектура
------------
-- Policy: ``MlpLstmPolicy`` (RecurrentPPO из sb3-contrib).
-- Перед MLP: LSTM encoder (hidden=256, 1 слой).
-- Actor head: [128] → action mean.
-- Critic head: [128] → value (отдельный LSTM: ``enable_critic_lstm=True``).
-- ``shared_lstm=False`` — actor и critic не делят одну LSTM.
-
-Гиперпараметры
---------------
-- ``LSTM_HIDDEN_SIZE = 256``
-- ``N_LSTM_LAYERS = 1``
-- ``NET_ARCH = {"pi": [128], "vf": [128]}`` — после LSTM.
-- log_std: те же границы, что у ``default``.
-
-Зачем LSTM
-----------
-Задача зависит от истории (ветер во времени, прошлые решения по Z).
-LSTM получает последовательность obs и может запоминать контекст,
-когда Markov obs недостаточен.
-
-Особенности обучения
---------------------
-- Runner использует RecurrentPPO вместо PPO.
-- SubprocVecEnv без worker-rollout shmem (другой путь collect_rollouts).
-- Эпизодные hidden state сбрасываются на done.
-
-Совместимость
---------------
-- obs: рекомендуется ``default`` (33) с temporal/probe фичами.
-- Чекпоинт ``default`` ↔ ``lstm`` **не взаимозаменяемы**.
-
-Экспорт: ``SPEC`` с ``recurrent=True``.
-"""
+# PPO lstm: RecurrentPPO с LSTM.
 
 from __future__ import annotations
 

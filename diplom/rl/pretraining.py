@@ -62,7 +62,7 @@ def pretrain_policy_on_demo_dataset(
     if getattr(model.policy, "lstm_actor", None) is not None or getattr(model.policy, "shared_lstm", None) is not None:
         raise ValueError(
             "Demo pretraining пока поддерживает только feed-forward PPO-политики. "
-            "Для recurrent-модели сначала используйте `--model default` или `--model explore`."
+            "Для recurrent-модели сначала используйте --model default или --model explore."
         )
 
     dataset = load_demo_dataset(dataset_path)

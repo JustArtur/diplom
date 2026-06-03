@@ -1,4 +1,4 @@
-"""Probe-ветер по высотам: один batch-запрос к WindInterpolator на шаг."""
+# Probe-ветер по высотам: один batch-запрос к WindInterpolator на шаг.
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ def compute_probe_winds(
     z_min: float,
     z_max: float,
 ) -> tuple[np.ndarray, float]:
-    """Вернуть (probe_winds[8], max_probe) одним batch_vector_at."""
+    # Вернуть (probe_winds[8], max_probe) одним batch_vector_at.
     n = len(_OFFSETS)
     z_probes = np.clip(float(position[2]) + _OFFSETS, z_min, z_max).astype(np.float64)
     x = np.full(n, float(position[0]), dtype=np.float64)

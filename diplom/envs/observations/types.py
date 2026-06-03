@@ -1,18 +1,4 @@
-"""Общие типы для obs-модулей.
-
-ObsStepContext — общий контекст шага для всех obs-моделей.
-
-Поля
-----
-- ``sim_time`` — модельное время ERA5 для ``wind_interp.vector_at``.
-- ``z_min`` / ``z_max`` — клип probe-высот по границам датасета.
-- ``normalize`` — делить компоненты на масштабы из ``envs/constants.py``.
-- ``reward_state`` — RewardState эпизода (best distance, adverse_wind_steps,
-  last_wind_align_delta для nav/temporal фич; общий объект с reward-модулю).
-- ``wind_align_scale`` — из reward-модуля (``WIND_ALIGN_SCALE``), делитель
-  для wind_toward и probe winds в obs.
-- ``probe_winds`` — предвычисленные wind_toward на probe-высотах (BalloonEnv); иначе None.
-"""
+# ObsStepContext для сборки наблюдений.
 
 from __future__ import annotations
 
@@ -25,7 +11,7 @@ from diplom.envs.rewards.types import RewardState
 
 @dataclass(frozen=True, slots=True)
 class ObsStepContext:
-    """Immutable контекст одного шага; поля — см. docstring модуля."""
+    # Immutable контекст одного шага; поля, см. docstring модуля.
 
     sim_time: np.datetime64
     z_min: float

@@ -1,4 +1,4 @@
-"""Общие хелперы PPO-политики (делегируют в diplom.rl.ppo.models)."""
+# Общие хелперы PPO-политики (делегируют в diplom.rl.ppo.models).
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def clamp_policy_log_std(
     log_std_max: float | None = None,
     model_name: str = "default",
 ) -> None:
-    """Ограничить learnable log_std политики."""
+    # Ограничить learnable log_std политики.
     import torch
 
     spec = get_model_spec(model_name)

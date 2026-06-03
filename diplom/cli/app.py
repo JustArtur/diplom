@@ -1,4 +1,4 @@
-"""Typer CLI: точка сборки и регистрация команд."""
+# Typer CLI: точка сборки и регистрация команд.
 
 from __future__ import annotations
 

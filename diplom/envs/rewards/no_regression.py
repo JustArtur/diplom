@@ -1,19 +1,4 @@
-"""Reward ``no_regression`` — полный reward без distance_regression.
-
-CLI: ``--reward no_regression``
-
-Отличия от полного reward
-----------------------
-- ``regression_term = 0.0`` всегда (best_horizontal_distance всё ещё обновляется
-  для best_distance bonus и obs nav ``best_ratio``).
-
-Все остальные термы и константы — как в полном reward.
-
-Когда использовать
-------------------
-A/B: оценить, насколько ``distance_regression`` (coef=0.5) мешает или помогает
-обучению. Полезно для офлайн rollout той же политики с другим reward.
-"""
+# Reward no_regression: без штрафа distance_regression.
 
 from __future__ import annotations
 

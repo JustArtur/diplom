@@ -1,4 +1,4 @@
-"""Профилирование обучения PPO: cProfile (CPU) и memray (память)."""
+# Профилирование обучения PPO: cProfile (CPU) и memray (память).
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from diplom.dev.profiling.memory import (
 if TYPE_CHECKING:
     from memray import Tracker
 
-# Одна среда в DummyVecEnv — для profile-ppo-cpu и режима --single-process.
+# Одна среда в DummyVecEnv, для profile-ppo-cpu и режима --single-process.
 PROFILE_N_ENVS = 1
 PROFILE_PROF_FILENAME = "profile.prof"
 PROFILE_MEMRAY_BIN = "memray.bin"
@@ -49,7 +49,8 @@ class CprofileProcessReport:
 
 
 class MemrayNotFoundError(ImportError):
-    """memray не установлен."""
+    # memray не установлен.
+    pass
 
 
 def _load_tracker() -> type[Tracker]:
@@ -90,7 +91,7 @@ def run_cprofile_train(
     profile_targets: MemrayProfileTargets | None = None,
     print_stats: bool = True,
 ) -> tuple[Path, list[CprofileProcessReport]]:
-    """cProfile обучения: один процесс (DummyVecEnv) или выбранные процессы run-а."""
+    # cProfile обучения: один процесс (DummyVecEnv) или выбранные процессы run-а.
     from diplom.rl.ppo.runner import train_ppo
 
     targets = profile_targets or MemrayProfileTargets()
@@ -135,7 +136,7 @@ def run_cprofile_train(
     if targets.needs_child_hooks():
         with multiprocess_cprofile_session(run_dir, targets=targets):
             if profile_main_in_process:
-                print(f"[profile-ppo-cpu] Главный процесс → {prof_path}")  # noqa: T201
+                print(f"[profile-ppo-cpu] Главный процесс -> {prof_path}")  # noqa: T201
                 profiler = cProfile.Profile()
                 profiler.enable()
                 try:
@@ -146,7 +147,7 @@ def run_cprofile_train(
             else:
                 _run_training()
     elif profile_main_in_process:
-        print(f"[profile-ppo-cpu] cProfile → {prof_path}")  # noqa: T201
+        print(f"[profile-ppo-cpu] cProfile -> {prof_path}")  # noqa: T201
         profiler = cProfile.Profile()
         profiler.enable()
         try:
@@ -207,7 +208,7 @@ def _run_cprofile_train_multiprocess(
     with multiprocess_cprofile_session(run_dir, targets=profile_targets) as cprofile_dir:
         if profile_targets.main:
             main_prof = cprofile_prof_path(cprofile_dir, MAIN_PROCESS_NAME)
-            print(f"[profile-ppo-cpu] Главный процесс → {main_prof}")  # noqa: T201
+            print(f"[profile-ppo-cpu] Главный процесс -> {main_prof}")  # noqa: T201
             profiler = cProfile.Profile()
             profiler.enable()
             try:
@@ -247,14 +248,14 @@ def _run_memray_cli(*args: str) -> int:
 
 
 def print_memray_table(bin_path: Path) -> None:
-    """Топ аллокаций в терминал (`memray table`)."""
+    # Топ аллокаций в терминал (memray table).
     code = _run_memray_cli("table", str(bin_path.resolve()))
     if code != 0:
         print(f"[profile-ppo-mem] memray table завершился с кодом {code}", file=sys.stderr)  # noqa: T201
 
 
 def write_memray_flamegraph(bin_path: Path, html_path: Path) -> bool:
-    """HTML flame graph (`memray flamegraph`)."""
+    # HTML flame graph (memray flamegraph).
     html_path = html_path.resolve()
     html_path.parent.mkdir(parents=True, exist_ok=True)
     code = _run_memray_cli("flamegraph", str(bin_path.resolve()), "-o", str(html_path))
@@ -312,7 +313,7 @@ def run_memray_train(
     multiprocess: bool = True,
     profile_targets: MemrayProfileTargets | None = None,
 ) -> tuple[Path, list[MemrayProcessReport]]:
-    """memray-отчёт обучения: один процесс (DummyVecEnv) или все процессы run-а."""
+    # memray-отчёт обучения: один процесс (DummyVecEnv) или все процессы run-а.
     from diplom.rl.ppo.runner import train_ppo
 
     targets = profile_targets or MemrayProfileTargets()
@@ -361,13 +362,13 @@ def run_memray_train(
     if targets.needs_child_hooks():
         with multiprocess_memray_session(run_dir, targets=targets, native_traces=native_traces):
             if profile_main_in_process:
-                print(f"[profile-ppo-mem] Главный процесс → {bin_path}")  # noqa: T201
+                print(f"[profile-ppo-mem] Главный процесс -> {bin_path}")  # noqa: T201
                 with Tracker(bin_path, native_traces=native_traces):
                     _run_training()
             else:
                 _run_training()
     elif profile_main_in_process:
-        print(f"[profile-ppo-mem] memray → {bin_path}")  # noqa: T201
+        print(f"[profile-ppo-mem] memray -> {bin_path}")  # noqa: T201
         with Tracker(bin_path, native_traces=native_traces):
             _run_training()
     else:
@@ -430,7 +431,7 @@ def _run_memray_train_multiprocess(
     ) as memray_dir:
         if profile_targets.main:
             main_bin = memray_bin_path(memray_dir, MAIN_PROCESS_NAME)
-            print(f"[profile-ppo-mem] Главный процесс → {main_bin}")  # noqa: T201
+            print(f"[profile-ppo-mem] Главный процесс -> {main_bin}")  # noqa: T201
             with Tracker(main_bin, native_traces=native_traces):
                 _run_training()
         else:

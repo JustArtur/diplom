@@ -1,4 +1,4 @@
-"""Фабрика зависимостей и точка входа для запуска визуализации."""
+# Фабрика зависимостей и точка входа для запуска визуализации.
 
 from dataclasses import replace
 
@@ -14,21 +14,21 @@ from .simulation import BalloonSimulation
 
 
 class VisualizationRunner:
-    """Собирает зависимости (plotter, HUD, частицы) и запускает визуализацию."""
+    # Собирает зависимости (plotter, HUD, частицы) и запускает визуализацию.
 
     def build_plotter(self, config: VisualizationConfig) -> pv.Plotter:
-        """Создать и настроить PyVista Plotter."""
+        # Создать и настроить PyVista Plotter.
         plotter = pv.Plotter(window_size=list(config.window_size))
         plotter.set_background(config.bg_bottom, top=config.bg_top)
         return plotter
 
     @staticmethod
     def build_hud(plotter: pv.Plotter) -> BalloonHUD:
-        """Создать HUD для данного плоттера."""
+        # Создать HUD для данного плоттера.
         return BalloonHUD(plotter)
 
     def run_real(self, config: AppConfig) -> None:
-        """Загрузить реальные данные ветра и запустить визуализацию."""
+        # Загрузить реальные данные ветра и запустить визуализацию.
         wind_interpolator = build_wind_interpolator(config.wind)
         log_world_bounds(
             wind_interpolator.world_bounds,

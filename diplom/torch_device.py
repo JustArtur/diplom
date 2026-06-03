@@ -1,14 +1,13 @@
-"""Выбор устройства вычислений PyTorch (cpu / cuda / mps)."""
+# Выбор устройства вычислений PyTorch (cpu / cuda / mps).
 
 from __future__ import annotations
 
 
 def resolve_torch_device(kind: str) -> str:
-    """Превращает строку запроса в валидное имя устройства для SB3/torch.
-
-    Raises:
-        ValueError: неизвестный тип или запрошенное устройство недоступно.
-    """
+    # Превращает строку запроса в валидное имя устройства для SB3/torch.
+    #
+    # ValueError: неизвестный тип или запрошенное устройство недоступно.
+    #
     import torch
 
     key = kind.strip().lower()

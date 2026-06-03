@@ -39,11 +39,11 @@ def _env_factory(
     wind_config: WindConfig,
     env_idx: int | None = None,
 ) -> BalloonEnv:
-    """Создаёт одну среду внутри рабочего подпроцесса.
-
-    Функция должна быть определена на уровне модуля (не lambda и не closure),
-    чтобы pickle мог сериализовать её при передаче в SubprocVecEnv.
-    """
+    # Создаёт одну среду внутри рабочего подпроцесса.
+    #
+    # Функция должна быть определена на уровне модуля (не lambda и не closure),
+    # чтобы pickle мог сериализовать её при передаче в SubprocVecEnv.
+    #
     from diplom.dev.profiling.cpu import start_process_cprofile_if_enabled
     from diplom.dev.profiling.memory import env_process_name, start_process_memray_if_enabled
 
@@ -97,7 +97,7 @@ def _make_vec_env(
 
 
 def training_run_dir_name(index: int) -> str:
-    """Имя подкаталога run-а: ``PPO_{index}``."""
+    # Имя подкаталога run-а: PPO_{index}.
     return f"PPO_{index}"
 
 
@@ -118,7 +118,7 @@ def _resolve_run_and_model(
     *,
     resume: bool,
 ) -> tuple[Path, Path, bool]:
-    """Вернуть (run_dir, model_path, continuing)."""
+    # Вернуть (run_dir, model_path, continuing).
     parent_logdir.mkdir(parents=True, exist_ok=True)
     experiment_dir = _experiment_logdir(parent_logdir, run_prefix)
     legacy_model = experiment_dir / "ppo_model.zip"
@@ -144,7 +144,7 @@ def training_run_dir(
     *,
     reuse_latest: bool = False,
 ) -> Path:
-    """Каталог run-а: ``{parent}/{run_prefix}/PPO_N`` (всё внутри, включая модель)."""
+    # Каталог run-а: {parent}/{run_prefix}/PPO_N (всё внутри, включая модель).
     parent_logdir.mkdir(parents=True, exist_ok=True)
     experiment_dir = _experiment_logdir(parent_logdir, run_prefix)
 
@@ -168,7 +168,7 @@ def _ppo_index_from_dir_name(name: str) -> int | None:
 
 
 def _flat_ppo_index_from_dir_name(name: str, *, run_prefix: str) -> int | None:
-    """Индекс из плоского каталога ``{run_prefix}#PPO_N`` (старый формат)."""
+    # Индекс из плоского каталога {run_prefix}#PPO_N (старый формат).
     prefix = f"{run_prefix}#PPO_"
     if not name.startswith(prefix):
         return None
@@ -251,11 +251,10 @@ def train_ppo(
     demo_pretrain_learning_rate: float | None = None,
     demo_pretrain_max_grad_norm: float | None = None,
 ) -> Path:
-    """Train PPO agent on the balloon environment.
-
-    Returns:
-        Каталог текущего run-а (TensorBoard ``tb_*``, подкаталог ``trajectories``).
-    """
+    # Обучение PPO на BalloonEnv.
+    #
+    # Возвращает каталог текущего run-а (TensorBoard tb_*, подкаталог trajectories).
+    #
     from diplom.trajectory.live.callback import TrajectoryVisualizationCallback
 
     parent_logdir = config.training.logdir
@@ -366,13 +365,13 @@ def train_ppo(
         else:
             if model_path.exists() and not resume:
                 print(  # noqa: T201
-                    f"[train_ppo] {model_path} уже существует, но --resume не задан — "
+                    f"[train_ppo] {model_path} уже существует, но --resume не задан, "
                     "будет перезаписан в конце обучения"
                 )
             model = ppo_cls(
                 policy=model_spec.policy_type,
                 env=vec_env,
-                # Собираем больше опыта перед каждым обновлением — лучше
+                # Собираем больше опыта перед каждым обновлением, лучше
                 # использование данных и меньше накладных расходов обновления.
                 n_steps=config.training.ppo_n_steps,
                 # 512 делит rollout_size=4096*n_envs нацело и эффективнее на MPS/CPU.

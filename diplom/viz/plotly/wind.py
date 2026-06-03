@@ -1,18 +1,17 @@
-"""3D-визуализация поля ветра ERA5 (Plotly HTML).
-
-Строит интерактивный 3D-граф с конусами (Cone), отображающими направление и
-скорость ветра на всех высотах, широтах и долготах для выбранного временного
-среза ERA5-датасета.
-
-Публичный API:
-  list_available_times(path)               → list[np.datetime64]
-  resolve_wind_time(interpolator, target)  → np.datetime64
-  compute_wind_steerability_stats(...)     → WindSteerabilityStats
-  build_wind_figure(interpolator, time, **opts) → go.Figure
-  save_figure(fig, path)                   → standalone HTML
-
-Пакетная отрисовка датасетов из ``data/preview/`` — команда CLI ``diplom wind-viz``.
-"""
+# 3D-визуализация поля ветра ERA5 (Plotly HTML).
+#
+# Строит интерактивный 3D-граф с конусами (Cone), отображающими направление и
+# скорость ветра на всех высотах, широтах и долготах для выбранного временного
+# среза ERA5-датасета.
+#
+# Публичный API:
+# list_available_times(path)               -> list[np.datetime64]
+# resolve_wind_time(interpolator, target)  -> np.datetime64
+# compute_wind_steerability_stats(...)     -> WindSteerabilityStats
+# build_wind_figure(interpolator, time, **opts) -> go.Figure
+# save_figure(fig, path)                   -> standalone HTML
+#
+# Пакетная отрисовка датасетов из data/preview/, команда CLI diplom wind-viz.
 
 from __future__ import annotations
 
@@ -32,8 +31,7 @@ from diplom.viz.plotly.wind_traces import (
 )
 from diplom.wind.interp import WindInterpolator
 
-# ──────────────────── Имена переменных ERA5 (list_available_times) ────────────────────
-
+# Имена переменных ERA5 (list_available_times)
 _TIME_DIM = "valid_time"
 
 # Эталонные пары давления (гПа) для local directional shear: 700↔500, 500↔300, …
@@ -59,7 +57,7 @@ def _horizontal_vector_angle_deg(
     *,
     calm_speed_mps: float,
 ) -> np.ndarray:
-    """Угол между горизонтальными векторами ветра через скалярное произведение, [0, 180]°."""
+    # Угол между горизонтальными векторами ветра через скалярное произведение, [0, 180]°.
     dot = u1 * u2 + v1 * v2
     mag = np.hypot(u1, v1) * np.hypot(u2, v2)
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -76,7 +74,7 @@ def _resolve_reference_pair_indices(
     *,
     tolerance_hpa: float,
 ) -> tuple[int, int] | None:
-    """Индексы уровней для пары (низкая высота ↔ высокая), или None если уровни недоступны."""
+    # Индексы уровней для пары (низкая высота / высокая), или None если уровни недоступны.
     idx_low = int(np.argmin(np.abs(pressure_hpa - p_low_hpa)))
     idx_high = int(np.argmin(np.abs(pressure_hpa - p_high_hpa)))
     if idx_low == idx_high:
@@ -89,7 +87,7 @@ def _resolve_reference_pair_indices(
 
 
 def _unwrap_azimuth_along_levels(azimuth_deg: np.ndarray) -> np.ndarray:
-    """Развернуть азимут вдоль оси уровней (axis=1) для расчёта кривизны."""
+    # Развернуть азимут вдоль оси уровней (axis=1) для расчёта кривизны.
     step = azimuth_deg[:, 1:] - azimuth_deg[:, :-1]
     step = (step + 180.0) % 360.0 - 180.0
     return np.concatenate([azimuth_deg[:, :1], azimuth_deg[:, :1] + np.cumsum(step, axis=1)], axis=1)
@@ -116,10 +114,10 @@ def _weighted_steerability_score(
 
 @dataclass(frozen=True, slots=True)
 class WindSteerabilityStats:
-    """RL-ориентированные метрики управляемости ветром по всему датасету.
-
-    Все компоненты нормализованы в [0, 1] и не зависят от размера сетки.
-    """
+    # RL-ориентированные метрики управляемости ветром по всему датасету.
+    #
+    # Все компоненты нормализованы в [0, 1] и не зависят от размера сетки.
+    #
 
     steerability_score: float
     d_local: float
@@ -137,7 +135,7 @@ class WindSteerabilityStats:
     weight_temporal: float
 
     def summary_lines(self) -> tuple[str, ...]:
-        """Краткие строки для лога и аннотации на графике."""
+        # Краткие строки для лога и аннотации на графике.
         lines = (
             f"Steerability Score: {100.0 * self.steerability_score:.1f}",
             f"D_local (сдвиг направления): {100.0 * self.d_local:.1f} "
@@ -160,18 +158,18 @@ def compute_wind_steerability_stats(
     steerability_weights: tuple[float, float, float, float] = DEFAULT_STEERABILITY_WEIGHTS,
     temporal_lags: tuple[int, ...] = DEFAULT_TEMPORAL_LAGS,
 ) -> WindSteerabilityStats:
-    """Оценить управляемость ветром для RL по всему ERA5-датасету.
-
-    Компоненты (все [0, 1], size-invariant):
-
-    * **D_local** — mean arccos(V_lo·V_hi / |V_lo||V_hi|) по эталонным парам
-      700↔500, 500↔300, 300↔250, 250↔200, 200↔150 (доступным в файле).
-    * **H** — доля покрытых 15°-секторов круга направлений по всем высотам в точке.
-    * **C** — средняя «богатость» вертикальной кривизны: |d²θ/dz²| (развёрнутый азимут).
-    * **T** — средняя векторная автокорреляция V(t) с V(t+τ), τ ∈ {1,3,6} шагов.
-
-    **Steerability Score** = взвешенная сумма компонент (w = 0.30, 0.35, 0.15, 0.20).
-    """
+    # Оценить управляемость ветром для RL по всему ERA5-датасету.
+    #
+    # Компоненты (все [0, 1], size-invariant):
+    #
+    # * **D_local**, mean arccos(V_lo·V_hi / |V_lo||V_hi|) по эталонным парам
+    # 700↔500, 500↔300, 300↔250, 250↔200, 200↔150 (доступным в файле).
+    # * **H**, доля покрытых 15°-секторов круга направлений по всем высотам в точке.
+    # * **C**, средняя богатость вертикальной кривизны: |d²θ/dz²| (развёрнутый азимут).
+    # * **T**, средняя векторная автокорреляция V(t) с V(t+τ), τ ∈ {1,3,6} шагов.
+    #
+    # **Steerability Score** = взвешенная сумма компонент (w = 0.30, 0.35, 0.15, 0.20).
+    #
     if calm_speed_mps < 0.0:
         raise ValueError("calm_speed_mps должен быть ≥ 0.")
     if heading_bin_deg <= 0.0 or 360.0 % heading_bin_deg != 0.0:
@@ -194,7 +192,7 @@ def compute_wind_steerability_stats(
     n_levels = int(u.shape[1])
     valid = speed >= calm_speed_mps
 
-    # ── D_local: эталонные пары давления ─────────────────────────────────
+    # D_local: эталонные пары давления
     pair_angles: list[np.ndarray] = []
     for p_low, p_high in REFERENCE_SHEAR_PAIRS_HPA:
         resolved = _resolve_reference_pair_indices(
@@ -225,7 +223,7 @@ def compute_wind_steerability_stats(
         d_local_angle_deg = 0.0
         d_local = 0.0
 
-    # ── H: reachable heading diversity (coverage по высотам) ───────────────
+    # H: reachable heading diversity (coverage по высотам)
     n_bins = int(360.0 / heading_bin_deg)
     bin_idx = (np.floor(azimuth_deg / heading_bin_deg).astype(np.intp) % n_bins)
     n_spatial = int(valid.shape[2] * valid.shape[3])
@@ -247,7 +245,7 @@ def compute_wind_steerability_stats(
         else 0.0
     )
 
-    # ── C: vertical wind curvature |d²θ/dz²| ─────────────────────────────
+    # C: vertical wind curvature |d²θ/dz²|
     if n_levels >= 3 and alt_sorted.size >= 3:
         theta_unwrapped = _unwrap_azimuth_along_levels(azimuth_deg)
         dz = np.diff(alt_sorted)
@@ -270,7 +268,7 @@ def compute_wind_steerability_stats(
     else:
         curvature_richness = 0.0
 
-    # ── T: temporal persistence (vector autocorrelation) ───────────────────
+    # T: temporal persistence (vector autocorrelation)
     temporal_persistence: float | None
     if n_time >= 2:
         lag_scores: list[float] = []
@@ -320,33 +318,29 @@ def compute_wind_steerability_stats(
 
 
 def _ensure_scene_axis_range(lo: float, hi: float, *, min_half_width_m: float = 500.0) -> tuple[float, float]:
-    """Plotly не любит совпадающие min/max; для решётки из одной точки расширяем полуширину."""
+    # Plotly не любит совпадающие min/max; для решётки из одной точки расширяем полуширину.
     center = (lo + hi) * 0.5
     half = max((hi - lo) * 0.5, min_half_width_m)
     return center - half, center + half
 
 
-# ──────────────────── Список доступных временных меток ────────────────────
-
-
+# Список доступных временных меток
 def list_available_times(path: Path) -> List[np.datetime64]:
-    """Вернуть список временных меток, доступных в ERA5-файле."""
+    # Вернуть список временных меток, доступных в ERA5-файле.
     with xr.open_dataset(path) as ds:
         times = ds[_TIME_DIM].values.astype("datetime64[s]")
     return [np.datetime64(t, "s") for t in times]
 
 
 def resolve_wind_time(interpolator: WindInterpolator, time_target: np.datetime64) -> np.datetime64:
-    """Выбрать ближайший к ``time_target`` шаг из оси времени интерполятора."""
+    # Выбрать ближайший к time_target шаг из оси времени интерполятора.
     times_ns = interpolator.time_axis_ns.astype("datetime64[ns]")
     target_ns = np.datetime64(time_target, "ns")
     time_idx = int(np.argmin(np.abs(times_ns.astype(np.int64) - target_ns.astype(np.int64))))
     return np.datetime64(int(interpolator.time_axis_ns[time_idx]), "ns").astype("datetime64[s]")
 
 
-# ──────────────────── Построение 3D-графика ────────────────────
-
-
+# Построение 3D-графика
 def build_wind_figure(
     interpolator: WindInterpolator,
     time: np.datetime64,
@@ -366,36 +360,22 @@ def build_wind_figure(
     origin_lat: Optional[float] = None,
     origin_lon: Optional[float] = None,
 ) -> go.Figure:
-    """Построить интерактивный 3D-граф поля ветра ERA5.
-
-    Конусы (Cone) кодируют:
-      • Направление острия  → направление ветра (u, v, w·w_scale).
-      • Цвет               → горизонтальный азимут **arctan2(v, u)** в градусах (0° = E, 90° = N) с
-                             **циклической** палитрой: близкие направления (напр. 350° и 30°) дают близкий цвет,
-                             противоположные (≈180°) — максимально различный.
-      • Размер (слабо)     → горизонтальная скорость через сжатый множитель `cone_speed_*`; штиль — отдельно, серым.
-      • Tooltip            → u, v, w (реальные), скорость, давление, высота, азимут.
-
-    Args:
-        interpolator: интерполятор ERA5 (тот же, что в обучении и симуляции).
-        time:         временна́я метка среза; клампится к диапазону датасета.
-        title:        заголовок графика.
-        stride_lon:   прореживание по долготе (1 = брать каждую точку).
-        stride_lat:   прореживание по широте.
-        stride_altitude_m: шаг сетки отрисовки по высоте в **метрах** (равномерно по оси Z).
-                           u, v, w берутся через ``WindInterpolator.batch_vector_at`` (4D-интерполяция).
-        w_scale:      масштаб вертикальной компоненты для наглядности.
-        cone_sizeref: при sizemode=absolute меньше значение → меньше конусы; умножается на cone_scale.
-        cone_azimuth_colorscale: циклическая палитра [[0,color],…,[1,color]] или имя Plotly; по умолчанию HSL-колесо.
-                                   Для азимута нужна палитра, где первый и последний цвет совпадают.
-        cone_azimuth_reversescale: перевернуть именованную палитру (игнорируется для пользовательского списка).
-        cone_speed_floor: нижняя граница множителя от нормализованной скорости (узкий разброс длин между точками).
-        cone_speed_power: степень нормализованной горизонтальной скорости для этого множителя.
-        calm_speed_mps: |V_h| ниже порога → серый отдельный trace (штиль).
-        steerability_stats: готовые RL-метрики управляемости; если None — считаются по всему датасету.
-        altitude_unit: «km» или «m» — единицы на оси Z.
-        origin_lat/origin_lon: опорная точка для локальных метровых координат (границы сцены как у `WindInterpolator.world_bounds`).
-    """
+    # Построить интерактивный 3D-граф поля ветра ERA5.
+    #
+    # Конусы (Cone) кодируют:
+    # - Направление острия  -> направление ветра (u, v, w·w_scale).
+    # - Цвет               -> горизонтальный азимут **arctan2(v, u)** в градусах (0° = E, 90° = N) с
+    # **циклической** палитрой: близкие направления (напр. 350° и 30°) дают близкий цвет,
+    # противоположные (≈180°), максимально различный.
+    # - Размер (слабо)     -> горизонтальная скорость через сжатый множитель cone_speed_*; штиль, отдельно, серым.
+    # - Tooltip            -> u, v, w (реальные), скорость, давление, высота, азимут.
+    #
+    # interpolator, тот же ERA5-интерполятор, что в обучении. time клампится к датасету.
+    # stride_lon/lat, прореживание сетки; stride_altitude_m, шаг по высоте (м), u/v/w через
+    # WindInterpolator.batch_vector_at. cone_sizeref и cone_speed_* задают размер конусов;
+    # calm_speed_mps, порог штиля (отдельный серый trace). steerability_stats можно передать
+    # готовыми; иначе считаются по датасету. altitude_unit: km или m; origin_lat/lon, опорная точка сцены.
+    #
     plot_time = np.datetime64(time, "ns")
     altitude_unit_norm: Literal["m", "km"] = "km" if altitude_unit == "km" else "m"
 
@@ -437,7 +417,7 @@ def build_wind_figure(
     ):
         fig.add_trace(trace)
 
-    # ── Аннотации ────────────────────────────────────────────────────────
+    # Аннотации
     if steerability_stats is None:
         steerability_stats = compute_wind_steerability_stats(
             interpolator,
@@ -505,25 +485,21 @@ def build_wind_figure(
     return fig
 
 
-# ──────────────────── Сохранение ────────────────────
-
-
+# Сохранение
 def save_figure(fig: go.Figure, path: Path) -> None:
-    """Сохранить фигуру как standalone HTML (Plotly CDN, без встроенного JS)."""
+    # Сохранить фигуру как standalone HTML (Plotly CDN, без встроенного JS).
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.write_html(str(path), include_plotlyjs="cdn")
 
 
-# ──────────────────── Пакетная отрисовка (процессы) ────────────────────
-
-
+# Пакетная отрисовка (процессы)
 @dataclass(frozen=True, slots=True)
 class WindPlotRenderJob:
-    """Задание на построение одного HTML-графика (picklable для ProcessPool)."""
+    # Задание на построение одного HTML-графика (picklable для ProcessPool).
 
     dataset_path: Path
     output_dir: Path
-    time_ns: int | None  # np.datetime64[ns]; None — первый шаг датасета
+    time_ns: int | None  # np.datetime64[ns]; None, первый шаг датасета
     stride_lon: int
     stride_lat: int
     stride_altitude_m: float
@@ -542,7 +518,7 @@ class WindPlotRenderResult:
 
 
 def render_wind_plot_job(job: WindPlotRenderJob) -> WindPlotRenderResult:
-    """Построить и сохранить график для одного датасета (отдельный процесс)."""
+    # Построить и сохранить график для одного датасета (отдельный процесс).
     from diplom.data.era5_paths import era5_dataset_title, wind_plot_html_path
 
     name = job.dataset_path.name
@@ -554,10 +530,10 @@ def render_wind_plot_job(job: WindPlotRenderJob) -> WindPlotRenderResult:
             dataset_name=name,
             plot_path=plot_path,
             saved=False,
-            log_lines=(f"Пропуск {name}: график уже есть → {plot_path}",),
+            log_lines=(f"Пропуск {name}: график уже есть -> {plot_path}",),
         )
     if plot_path.exists() and job.force:
-        logs.append(f"Пересоздаю {name}: --force → {plot_path}")
+        logs.append(f"Пересоздаю {name}: --force -> {plot_path}")
 
     try:
         if job.time_ns is None:
@@ -633,7 +609,7 @@ def render_wind_plots(
     *,
     workers: int = 1,
 ) -> list[WindPlotRenderResult]:
-    """Выполнить задания последовательно или в пуле процессов."""
+    # Выполнить задания последовательно или в пуле процессов.
     job_list = list(jobs)
     if not job_list:
         return []

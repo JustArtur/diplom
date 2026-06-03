@@ -1,4 +1,4 @@
-"""Сборка Plotly-фигур эпизодов: общая логика для rollout, live-render и placeholder."""
+# Сборка Plotly-фигур эпизодов: общая логика для rollout, live-render и placeholder.
 
 from __future__ import annotations
 
@@ -119,7 +119,7 @@ def save_rollout_figure(
 
 
 def wind_overlay_cache_key(sim_time: np.datetime64) -> int:
-    """Ключ кэша слоя ветра: один слой конусов на каждый час ERA5."""
+    # Ключ кэша слоя ветра: один слой конусов на каждый час ERA5.
     return int(np.datetime64(sim_time, "h").astype(np.int64))
 
 

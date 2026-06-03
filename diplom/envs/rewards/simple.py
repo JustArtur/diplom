@@ -1,28 +1,4 @@
-"""Reward ``simple`` — упрощённая награда для A/B без «мешающих» термов.
-
-CLI: ``--reward simple``
-
-Отличия от полного reward
-----------------------
-Обнулены термы (логика state частично сохранена для метрик):
-
-- distance, distance_regression, wind_streak, wind_adverse_streak
-- adverse_wind_close, high_altitude, idle_action, z_stick
-
-Оставлены
----------
-wind_align, wind_align_delta, progress, energy, boundary,
-best_distance, hold_close, wind_scan, SUCCESS_REWARD.
-
-Константы
----------
-- ``Z_STICK_WINDOW_STEPS = 1`` — z_window не накапливается.
-
-Когда использовать
-------------------
-Стартовый эксперимент, когда нужно проверить, учится ли агент навигации
-без доминирующих штрафов (regression, z_stick, idle и т.д.).
-"""
+# Reward simple: базовая навигация без лишних штрафов.
 
 from __future__ import annotations
 
